@@ -1,0 +1,8 @@
+# pacchetto compilato
+dist/
+build/
+__pycache__/
+# binari di LibreHardwareMonitor: si scaricano con scarica_librehardwaremonitor.ps1
+LibreHardwareMonitor/*
+!LibreHardwareMonitor/LibreHardwareMonitor.config
+!LibreHardwareMonitor/LICENSE.txt

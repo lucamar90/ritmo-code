@@ -1,0 +1,111 @@
+/* ---------- pagina ---------- */
+:root {
+  --page: #08080a; --panel: #141418; --line: #2a2a32; --tx: #e9e7e2; --mut: #8c8c98; --cor: #D97757;
+  --zoom: 2;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--page); color: var(--tx); font: 14px/1.4 system-ui, "Segoe UI", sans-serif; }
+.app { display: flex; gap: 20px; min-height: 100vh; padding: 20px; }
+.stage { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; min-width: 0; }
+.hint { color: var(--mut); font-size: 12px; text-align: center; max-width: 720px; }
+
+.device {
+  position: relative; padding: calc(14px * var(--zoom)) calc(18px * var(--zoom));
+  background: linear-gradient(160deg, #26262c, #111114); border-radius: calc(14px * var(--zoom));
+  box-shadow: 0 30px 80px #000c, inset 0 1px 0 #ffffff14;
+}
+.usb { position: absolute; left: -26px; top: 50%; transform: translateY(-50%) rotate(-90deg); font-size: 10px; color: #555; letter-spacing: 2px; }
+.screen-wrap { width: calc(480px * var(--zoom)); height: calc(320px * var(--zoom)); overflow: hidden; border-radius: 3px; background: #000; }
+.screen {
+  position: relative; width: 480px; height: 320px; overflow: hidden; transform: scale(var(--zoom)); transform-origin: 0 0;
+  background: #141413; font-family: 'JetBrains Mono', ui-monospace, monospace; font-weight: 400; color: #E8E6DF;
+  user-select: none; -webkit-user-select: none; cursor: default; touch-action: none;
+}
+
+/* ---------- painel ---------- */
+.panel { width: 340px; flex: 0 0 340px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 14px; overflow-y: auto; max-height: calc(100vh - 40px); }
+.panel h1 { font-size: 16px; margin: 0 0 10px; }
+.panel h1 span { color: var(--mut); font-weight: 400; font-size: 12px; }
+details { border-top: 1px solid var(--line); padding: 8px 0; }
+summary { cursor: pointer; font-weight: 600; color: var(--cor); padding: 2px 0 6px; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 6px 0; }
+.row label { color: var(--tx); font-size: 13px; white-space: nowrap; }
+.row label b { color: var(--cor); font-weight: 600; }
+.row input[type=range] { flex: 1; max-width: 170px; accent-color: var(--cor); }
+.row select, .row input[type=number] { background: #0e0e11; color: var(--tx); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; max-width: 170px; }
+.row.btns { flex-wrap: wrap; justify-content: flex-start; }
+.grid4 button { flex: 1 0 45%; }
+button { background: #24242c; color: var(--tx); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; cursor: pointer; font: inherit; font-size: 12px; }
+button:hover { border-color: var(--cor); }
+.note { color: var(--mut); font-size: 12px; margin: 4px 0; }
+code { color: var(--cor); }
+.mrow { display: grid; grid-template-columns: 58px 1fr 64px 24px; gap: 6px; align-items: center; margin: 5px 0; font-size: 12px; }
+.mrow select, .mrow input { background: #0e0e11; color: var(--tx); border: 1px solid var(--line); border-radius: 6px; padding: 3px; width: 100%; font-size: 12px; }
+#log { background: #0b0b0d; border: 1px solid var(--line); border-radius: 8px; padding: 8px; height: 180px; overflow: auto; font-size: 11px; color: #9ad; white-space: pre-wrap; margin: 0; }
+
+/* ---------- oggetti "LVGL" ---------- */
+.o { position: absolute; box-sizing: border-box; }
+.lbl { white-space: pre; line-height: 1.13; }
+.lbl.wrap { white-space: normal; }
+.btn { border-radius: 10px; display: block; cursor: pointer; }
+.btn:active, .tbtn:active { background: #23221F !important; }
+.pctl { font-weight: 800; letter-spacing: -2px; line-height: 1; }
+.pctl small { font-size: 22px; font-weight: 500; letter-spacing: 0; margin-left: 2px; color: #8E8B82; }
+.cur { color: #D97757; animation: blink 1.1s steps(1) infinite; }
+.trow { border-radius: 0 !important; }
+.trow:active { background: #1B1A18; }
+.ico { display: inline-block; vertical-align: -0.14em; }
+.clawd svg, .wordmark svg { display: block; width: 100%; height: 100%; }
+
+.spinner { border-radius: 50%; animation: spin 1.2s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.breathe { animation: breathe 1.8s ease-in-out infinite; }
+@keyframes breathe { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+
+.tv { overflow: hidden; }
+.track { position: absolute; left: 0; top: 0; height: 100%; display: flex; }
+.track.anim { transition: transform .3s ease-out; }
+.tile { position: relative; width: 480px; height: 250px; flex: 0 0 480px; }
+.scroll { overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: #5C5C68 transparent; }
+.scroll::-webkit-scrollbar { width: 4px; }
+.scroll::-webkit-scrollbar-thumb { background: #5C5C68; border-radius: 2px; }
+
+/* textarea e tastiera nel tema Terminale (scuri, cornice 1 px) */
+.ta { background: #1B1A18; color: #E8E6DF; border: 1px solid #3A3834; border-radius: 4px; padding: 0 12px; font-size: 14px; display: flex; align-items: center; overflow: hidden; white-space: pre; }
+.ta.focus { border-color: #D97757; }
+.ta .ph { color: #5C5A55; }
+.ta .cur { display: inline-block; width: 8px; height: 16px; background: #D97757; margin-left: 1px; animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.kb { left: 0; bottom: 0; width: 480px; height: 160px; background: #141413; border-top: 1px solid #3A3834; padding: 6px; display: flex; flex-direction: column; gap: 4px; }
+.kb .kr { display: flex; gap: 4px; flex: 1; }
+.kb .k { flex: 1; background: #1B1A18; color: #E8E6DF; border: 1px solid #2C2A27; border-radius: 3px; display: flex; align-items: center; justify-content: center; font-size: 14px; cursor: pointer; }
+.kb .k.sp { background: #141413; color: #8E8B82; border-color: #3A3834; }
+.kb .k.ok { background: #141413; color: #D97757; border-color: #D97757; }
+.kb .k:active { background: #23221F; }
+.list { border: 2px solid #30303A; border-radius: 8px; padding: 4px 0; }
+.list .li { position: relative; height: 46px; display: flex; align-items: center; gap: 12px; padding: 0 14px; border-bottom: 1px solid #0F0F12; cursor: pointer; font-size: 14px; }
+.list .li:active { filter: brightness(1.3); }
+
+/* ---------- pagina web del device (form token) ---------- */
+.web-modal { position: fixed; inset: 0; background: #000a; display: flex; align-items: center; justify-content: center; z-index: 10; }
+.web-modal[hidden] { display: none; }
+.web-browser { width: min(640px, 94vw); border-radius: 12px; overflow: hidden; background: #0F0F12; box-shadow: 0 30px 90px #000; border: 1px solid #333; }
+.web-bar { display: flex; align-items: center; gap: 6px; background: #1f1f24; padding: 8px 10px; }
+.web-bar .dot { width: 10px; height: 10px; border-radius: 50%; background: #444; }
+.web-bar .url { flex: 1; background: #0e0e11; border-radius: 6px; padding: 4px 10px; color: #aaa; font-size: 12px; margin-left: 8px; }
+.web-page { min-height: 380px; display: flex; align-items: center; justify-content: center; padding: 30px 0; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; }
+.web-page .card { background: #1A1A20; border: 1px solid #30303A; border-radius: 16px; padding: 26px; max-width: 520px; width: 92%; }
+.web-page h1 { font-size: 19px; margin: 0 0 6px; display: flex; align-items: center; gap: 10px; }
+.web-page p { color: #8C8C98; font-size: 14px; line-height: 1.5; margin: 6px 0 14px; }
+.web-page textarea, .web-page input { width: 100%; background: #0F0F12; color: #F2F0EC; border: 1px solid #30303A; border-radius: 10px; padding: 12px; }
+.web-page textarea { font-family: ui-monospace, monospace; font-size: 13px; min-height: 96px; resize: vertical; }
+.web-page input { font-size: 14px; margin-bottom: 10px; }
+.web-page button { margin-top: 14px; width: 100%; background: #D97757; color: #1A1A20; border: 0; border-radius: 10px; padding: 14px; font-size: 16px; font-weight: 700; }
+.web-page a, .web-page code { color: #D97757; }
+.web-page .spark { width: 26px; height: 26px; }
+
+@media (max-width: 1100px) {
+  .app { flex-direction: column; }
+  .panel { width: auto; flex: none; max-height: none; }
+  :root { --zoom: 1.5; }
+}

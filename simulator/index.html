@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ritmo Code — Simulatore</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Montserrat:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="sim.css">
+</head>
+<body>
+<main class="app">
+  <section class="stage">
+    <div class="device" id="device">
+      <div class="usb">USB-C</div>
+      <div class="screen-wrap" id="screenWrap">
+        <div class="screen" id="screen"></div>
+      </div>
+    </div>
+    <p class="hint">Swipe col mouse (o frecce ← →) tra le schermate · doppio clic sul logo = demo animazioni · la tastiera fisica funziona nei campi di testo</p>
+  </section>
+
+  <aside class="panel" id="panel">
+    <h1>Simulatore <span>firmware v2.3 · tema Terminale</span></h1>
+
+    <details open>
+      <summary>Scenario</summary>
+      <div class="row btns">
+        <button data-act="boot-token">Riavvia (con token)</button>
+        <button data-act="boot-onboard">Primo avvio (onboarding)</button>
+      </div>
+      <p class="note">PIN demo: <b>1234</b> · token valido: qualunque testo che inizia con <code>sk-ant-</code></p>
+      <div class="row"><label>Velocità orologio</label>
+        <select id="speed"><option value="1">1×</option><option value="10">10×</option><option value="60">60×</option><option value="300">300×</option></select></div>
+      <div class="row"><label>Zoom schermo</label>
+        <select id="zoom"><option value="1">1×</option><option value="1.5">1.5×</option><option value="2" selected>2×</option><option value="2.5">2.5×</option></select></div>
+    </details>
+
+    <details open>
+      <summary>Risposta API (header unified-*)</summary>
+      <div class="row"><label>Finestra 5h <b id="h5v"></b></label><input type="range" id="h5" min="0" max="100" step="1"></div>
+      <div class="row"><label>Settimana <b id="d7v"></b></label><input type="range" id="d7" min="0" max="100" step="1"></div>
+      <div class="row"><label>Reset 5h tra <b id="r5v"></b></label><input type="range" id="r5" min="1" max="300" step="1"></div>
+      <div class="row"><label>Reset sett. tra <b id="r7v"></b></label><input type="range" id="r7" min="1" max="168" step="1"></div>
+      <div class="row"><label>Consumo automatico</label>
+        <select id="burn"><option value="0">spento</option><option value="0.1">0.1 %/min</option><option value="0.3">0.3 %/min</option><option value="1">1 %/min</option></select></div>
+      <div class="row"><label>Stato generale</label>
+        <select id="ust"><option value="allowed">allowed</option><option value="allowed_warning">allowed_warning</option><option value="rejected">rejected</option></select></div>
+      <div class="row"><label><input type="checkbox" id="apiFail"> La API fallisce (401)</label></div>
+      <div class="row btns"><button data-act="refresh">Aggiorna ora</button></div>
+    </details>
+
+    <details>
+      <summary>Modelli (sonda + status.claude.com)</summary>
+      <div id="modelRows"></div>
+      <div class="row"><label><input type="checkbox" id="statusOk" checked> status.claude.com raggiungibile</label></div>
+      <div class="row btns"><button data-act="probe-all">Sonda tutti ora</button><button data-act="models-page">Pagina web /models</button></div>
+      <p class="note">ID sconosciuti (es. <code>claude-opus-6</code>) rispondono 404 → chip <b>ID?</b></p>
+    </details>
+
+    <details>
+      <summary>Account</summary>
+      <div class="row btns"><button data-act="add-acct">+ Account di prova</button></div>
+    </details>
+
+    <details>
+      <summary>Momenti (animazioni soglia)</summary>
+      <div class="row btns grid4" id="momentBtns"></div>
+    </details>
+
+    <details>
+      <summary>Log seriale</summary>
+      <pre id="log"></pre>
+    </details>
+  </aside>
+</main>
+
+<div class="web-modal" id="webModal" hidden>
+  <div class="web-browser">
+    <div class="web-bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span><span class="url" id="webUrl">http://192.168.1.42/</span><button id="webClose">✕</button></div>
+    <div class="web-page" id="webPage"></div>
+  </div>
+</div>
+
+<script src="sim.js"></script>
+</body>
+</html>

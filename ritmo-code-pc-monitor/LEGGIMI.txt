@@ -1,0 +1,38 @@
+Ritmo Code PC Monitor
+=====================
+
+Invia le statistiche di questo PC al dispositivo Ritmo Code (pagina "pc" e riga pc della home):
+CPU, GPU, RAM, rete, dischi, temperature, consumi, ventole e sessioni di Claude Code.
+
+INSTALLAZIONE
+1) Copia questa cartella dove vuoi tenerla (es. C:\Programmi\RitmoCodePcMonitor).
+2) Doppio clic su installa.bat e conferma i permessi di amministratore.
+   - apre la porta 8765 solo alla rete locale
+   - avvia LibreHardwareMonitor all'accesso (serve l'amministratore per i sensori)
+   - avvia il monitor con Windows
+3) Si apre http://127.0.0.1:8765/ : scegli il dispositivo, inserisci il PIN,
+   premi "Collega questo PC". Il dispositivo deve essere acceso, sbloccato e sulla stessa rete.
+
+FILE
+RitmoCodePcMonitor.exe            con finestra: per verifiche
+RitmoCodePcMonitor-nascosto.exe   senza finestra: quello avviato con Windows
+LibreHardwareMonitor\             sensori (MPL-2.0), web server solo su 127.0.0.1:8085
+disinstalla.bat                   toglie avvio automatico, attivita' e regola firewall
+
+ICONA NELL'AREA DI NOTIFICA (vicino all'orologio)
+- passandoci sopra: CPU, GPU, RAM e se il dispositivo sta leggendo i dati
+- doppio clic: pagina di stato e collegamento
+- clic destro: apri il pannello del dispositivo, esci
+
+NOTE
+- Windows SmartScreen puo' avvisare che l'app non e' riconosciuta (non e' firmata):
+  "Ulteriori informazioni" -> "Esegui comunque".
+- Temperature o watt vuoti: esci e rientra in Windows (LibreHardwareMonitor parte all'accesso
+  come amministratore) oppure rilancia installa.bat.
+- Se il dispositivo non vede il PC: stessa rete Wi-Fi? (il dispositivo usa solo il 2,4 GHz)
+- Se l'IP del PC cambia, riapri http://127.0.0.1:8765/ e premi di nuovo "Collega questo PC",
+  oppure riserva l'indirizzo del PC nel router.
+- Per chiudere l'app: clic destro sull'icona -> Esci. Non avviare insieme la versione con
+  finestra e quella nascosta: usano la stessa porta.
+- installa.bat ferma e disattiva un eventuale LibreHardwareMonitor gia' installato da
+  un'altra app (ne basta uno); disinstalla.bat lo riattiva.
