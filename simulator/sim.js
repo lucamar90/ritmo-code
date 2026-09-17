@@ -971,7 +971,7 @@ const CLOCK_MIN = [0, 2, 5, 10];
 // dati di esempio: sul dispositivo arrivano da Open-Meteo e da SmallTV Monitor sul PC
 const WX = { ok: true, city: 'Milano', temp: 22, code: 2, day: true, tmax: 23, tmin: 18, tmax2: 22, tmin2: 18, code2: 80,
   sunrise: '07:03', sunset: '19:30', rainH0: 13, rain: [0, 3, 3, 3, 3, 5, 18, 45, 55, 30, 23, 25] };
-const PC = { ok: true, host: '192.168.5.8:8765', cpu: 12, cpuT: 56, ram: 61, gpu: 4, gpuT: 35, disk: 57 };
+const PC = { ok: true, host: '192.168.1.10:8765', cpu: 12, cpuT: 56, ram: 61, gpu: 4, gpuT: 35, disk: 57 };
 function wxGroup(c) { if (c === 0) return 0; if (c <= 2) return 1; if (c === 3) return 2; if (c === 45 || c === 48) return 3;
   if ((c >= 71 && c <= 77) || c === 85 || c === 86) return 5; if (c >= 95) return 6; if (c >= 51) return 4; return 2; }
 function wxDesc(c) {

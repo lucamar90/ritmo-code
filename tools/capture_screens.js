@@ -95,7 +95,7 @@ async function webShot(browser) {
   }
   const wave = (peak, shift) => Array.from({ length: 24 }, (_, h) =>
     +(Math.max(0, peak * Math.exp(-((h - 11 - shift) ** 2) / 10) + peak * 0.7 * Math.exp(-((h - 16) ** 2) / 8))).toFixed(1));
-  const PCD = { ok: true, age: 400, int: 1, kwh: 0.3, host: '192.168.5.8:8765', cpu_name: 'AMD Ryzen 7 9700X 8-Core Processor',
+  const PCD = { ok: true, age: 400, int: 1, kwh: 0.3, host: '192.168.1.10:8765', cpu_name: 'AMD Ryzen 7 9700X 8-Core Processor',
     gpu_name: 'NVIDIA GeForce RTX 3070 Ti', cpu: 12, cpu_t: 56, cpu_mhz: 4730, cpu_w: 47, core_max: 33, volt: 1.18, gpu: 4, gpu_t: 35,
     gpu_w: 11, gpu_hot: 45, gpu_mem_t: 40, gpu_mhz: 210, gpu_mem_load: 12, ram: 61, ram_used_gb: 18.4, ram_total_gb: 31.2,
     vram_used_gb: 1.0, vram_total_gb: 8, disk: 57, net_down: 2.4 * 1048576, net_up: 180 * 1024, disk_r: 235 * 1024, disk_w: 492 * 1024,
