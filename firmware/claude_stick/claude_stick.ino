@@ -2702,9 +2702,9 @@ static void build_tile_home(lv_obj_t *t) {
   lv_obj_t *tr = trow(t, 362, 7);                   // F54 ha solo le cifre: il simbolo dei gradi e' in F22
   g_ui.hmTemp = mklabel(tr, "--", F54, C_TEXT);
   mklabel(tr, "\xC2\xB0", F22, C_MUTED);
-  g_ui.hmDesc = tlabel(t, F12, C_MUTED, 310, 52);
-  g_ui.hmRain = tlabel(t, F12, C_MUTED, 310, 68);
-  g_ui.hmSun  = tlabel(t, F12, C_FAINT, 310, 84);
+  g_ui.hmDesc = tlabel(t, F12, C_MUTED, 310, 56);      // l'ultima riga finisce con la riga della data
+  g_ui.hmRain = tlabel(t, F12, C_MUTED, 310, 72);
+  g_ui.hmSun  = tlabel(t, F12, C_FAINT, 310, 88);
   for (lv_obj_t *l : {g_ui.hmDesc, g_ui.hmRain, g_ui.hmSun}) {
     lv_obj_set_width(l, 157);
     lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);

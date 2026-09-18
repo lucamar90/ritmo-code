@@ -1008,9 +1008,9 @@ function buildTileHome(t) {
   for (const o of [tom, h.date]) o.addEventListener('click', (e) => { if (realMs() - lastDragAt < 300) return; e.stopPropagation(); tmMenuOpen(); });
   h.icon = obj(t, 310, 9, 44, 44);
   h.temp = label(t, '', 54, C.TEXT, 362, -1); h.temp.classList.add('pctl');
-  h.desc = label(t, '', 12, C.MUTED, 310, 52);
-  h.rain = label(t, '', 12, C.MUTED, 310, 68);
-  h.sun = label(t, '', 12, C.FAINT, 310, 84);
+  h.desc = label(t, '', 12, C.MUTED, 310, 56);
+  h.rain = label(t, '', 12, C.MUTED, 310, 72);
+  h.sun = label(t, '', 12, C.FAINT, 310, 88);
   const b = tbox(t, 13, 112, 454, 75, 'claude');
   h.row = [0, 1].map((i) => {
     const y = 13 + i * 30;
