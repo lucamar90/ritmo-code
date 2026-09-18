@@ -601,9 +601,17 @@ class TrayIcon:
         u.CreatePopupMenu.restype = wt.HMENU
         u.AppendMenuW.argtypes = [wt.HMENU, wt.UINT, ctypes.c_size_t, wt.LPCWSTR]
         u.TrackPopupMenu.argtypes = [wt.HMENU, wt.UINT, ctypes.c_int, ctypes.c_int, ctypes.c_int, wt.HWND, wt.LPVOID]
+        u.DestroyMenu.argtypes = [wt.HMENU]
+        u.SetForegroundWindow.argtypes = [wt.HWND]
+        u.SetTimer.argtypes = [wt.HWND, ctypes.c_size_t, wt.UINT, wt.LPVOID]
+        u.SetTimer.restype = ctypes.c_size_t
+        u.LoadImageW.argtypes = [wt.HINSTANCE, wt.LPCWSTR, wt.UINT, ctypes.c_int, ctypes.c_int, wt.UINT]
         u.LoadImageW.restype = wt.HANDLE
+        u.LoadIconW.argtypes = [wt.HINSTANCE, wt.LPVOID]
+        u.LoadIconW.restype = wt.HICON
         u.RegisterWindowMessageW.restype = wt.UINT
         self.shell32.Shell_NotifyIconW.argtypes = [wt.DWORD, ctypes.POINTER(_NotifyIconData)]
+        self.shell32.ExtractIconW.argtypes = [wt.HINSTANCE, wt.LPCWSTR, wt.UINT]   # handle a 64 bit
         self.shell32.ExtractIconW.restype = wt.HICON
         self.kernel32.GetModuleHandleW.restype = wt.HINSTANCE
         self.taskbar_created = None                  # la finestra riceve messaggi gia' durante la creazione
