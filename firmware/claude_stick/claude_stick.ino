@@ -2686,6 +2686,8 @@ static void build_tile_home(lv_obj_t *t) {
   rrect(tom, 6, 0, 2, 3, 0, C_OK);
   g_ui.hmDate = tlabel(t, F14, C_MUTED, 33, 80);
   lv_obj_set_width(g_ui.hmDate, 264);
+  // centrato sulla scritta: -2 perche' le lettere stanno sopra il centro del riquadro della riga
+  lv_obj_align_to(tom, g_ui.hmDate, LV_ALIGN_OUT_LEFT_MID, -6, -2);
   for (lv_obj_t *o : {tom, g_ui.hmDate}) {
     lv_obj_add_flag(o, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_ext_click_area(o, 8);

@@ -1002,7 +1002,7 @@ function buildTileHome(t) {
   h.time.style.cursor = 'pointer';   // tocca l'ora: timer e pomodoro
   h.time.addEventListener('click', (e) => { if (realMs() - lastDragAt < 300) return; e.stopPropagation(); tmMenuOpen(); });
   // pomodoro disegnato accanto alla riga sotto l'ora: anche lei apre timer e pomodoro
-  const tom = obj(t, 13, 81, 14, 16, { cursor: 'pointer' });
+  const tom = obj(t, 13, 79, 14, 16, { cursor: 'pointer' });
   rrect(tom, 0, 3, 14, 13, 6, C.BAD); rrect(tom, 3, 1, 8, 3, 1, C.OK); rrect(tom, 6, 0, 2, 3, 0, C.OK);
   h.date = label(t, '', 14, C.MUTED, 33, 80); Object.assign(h.date.style, { width: '264px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' });
   for (const o of [tom, h.date]) o.addEventListener('click', (e) => { if (realMs() - lastDragAt < 300) return; e.stopPropagation(); tmMenuOpen(); });
