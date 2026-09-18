@@ -2710,10 +2710,11 @@ static void build_tile_home(lv_obj_t *t) {
     lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
   }
 
-  lv_obj_t *b = tbox(t, 13, 121, 454, 64, "claude");     // 64 : 40 = 1,6; padding 10 sopra e sotto
+  // 13 sotto la riga del pomodoro, 21 sopra il riquadro pc; righe del metro a passo 30, margini pari
+  lv_obj_t *b = tbox(t, 13, 110, 454, 75, "claude");
   const char *k[2] = {"5h", TRS("sett.", "week")};
   for (int i = 0; i < 2; i++) {
-    int y = 10 + i * 24;
+    int y = 13 + i * 30;
     tstatic(b, k[i], F14, C_MUTED, 13, y);
     g_ui.hmBlk[i] = blocks_create(b, 57, y, 10, F14);
     g_ui.hmPct[i] = tlabel(b, F14, C_TEXT, 149, y);
