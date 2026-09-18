@@ -60,6 +60,10 @@ async function simShots(browser) {
   await page.evaluate(() => { __sim.momentClose(); __sim.showMoment(0, 70); });
   await sleep(1500);
   await shot('alert');
+  await page.evaluate(() => { __sim.momentClose(); __sim.ccEvent('done', 'ritmo-code', 740); });
+  await sleep(1500);
+  await shot('claude');
+  await page.evaluate(() => __sim.ccClose());
   await page.evaluate(() => { __sim.momentClose(); __sim.pauseMenuOpen(); });
   await sleep(700);
   await shot('pause');

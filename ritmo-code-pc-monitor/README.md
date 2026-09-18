@@ -14,6 +14,10 @@ uptime e sessioni di Claude Code aperte.
 - **Icona nell'area di notifica**: il suggerimento mostra CPU, GPU, RAM e se il dispositivo sta
   leggendo i dati; doppio clic apre la pagina di stato, il menu (clic destro) apre anche il pannello
   del dispositivo ed esce dall'app.
+- **Avvisi di Claude Code**: con **Attiva gli avvisi** nella pagina di stato l'app aggiunge tre hook a
+  `~/.claude/settings.json` (`UserPromptSubmit`, `Stop`, `Notification`). Gli hook mandano l'evento a
+  `127.0.0.1:8765/claude/...`, l'app lo inoltra subito al dispositivo (`POST /claude`) e lo espone
+  anche in `/data.json`. Il dispositivo mostra quando Claude ha finito o aspetta un permesso.
 
 ## Uso
 
@@ -41,6 +45,8 @@ lettura di prova, `--port`, `--interval`, `--no-lhm`, `--no-tray`).
 | `cpu_temp`, `cpu_power`, `cpu_core_max`, `cpu_voltage` | LibreHardwareMonitor |
 | `gpu_name`, `gpu_load`, `gpu_temp`, `gpu_power`, `gpu_hotspot`, `gpu_mem_temp`, `gpu_clock_mhz`, `gpu_mem_load`, `vram_used_mb`, `vram_total_mb` | LibreHardwareMonitor (GPU con piu' memoria) |
 | `fans`, `board_temps`, `ram_temps`, `storage` (temperatura e vita residua) | LibreHardwareMonitor (scheda madre, RAM, dischi) |
+| `cc_busy`, `cc_ev_id`, `cc_ev` (`busy`, `done`, `perm`, `ask`), `cc_ev_proj`, `cc_ev_dur`, `cc_ev_age` | hook di Claude Code (solo se attivati) |
 
 La pagina di stato e il collegamento rispondono solo a `127.0.0.1`; dalla rete e' leggibile solo
-`/data.json`, che non contiene nomi di file, processi o finestre.
+`/data.json`, che non contiene nomi di file, processi o finestre. Con gli avvisi di Claude Code attivi
+contiene anche il nome della cartella dell'ultimo progetto (`cc_ev_proj`).

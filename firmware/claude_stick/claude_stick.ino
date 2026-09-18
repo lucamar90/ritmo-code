@@ -261,6 +261,7 @@ static int g_tzOffset = TZ_ROME;          // fuso: TZ_ROME (ora legale auto) o o
 static int g_slideSec = 0;                // slideshow: 0=off, 5/10/15/30s (config, NVS)
 static int g_heatMode = 3;                // 0=oggi 1=7g 2=30g 3=tutto (config, NVS)
 static bool g_resetAlert = true;          // avviso quando una finestra oltre l'80% si libera (NVS "rstal")
+static int  g_ccAlert = 2;                // avvisi di Claude Code: 0 spento, 1 sempre, 2/3 fine lavoro oltre 1/5 min (NVS "ccal")
 
 // ---- Diagnostica prestazioni (Impostazioni -> Contatore FPS, NVS "perf") ----
 // A schermo: overlay LVGL "FPS, CPU / ms (render | flush)". Sul seriale ogni 2s:
@@ -414,6 +415,7 @@ static void pause_menu_close();
 static void show_moment(int win, int thr);
 static void moment_tick();
 static void moment_close();
+static void cc_event(long id, const char *ev, const char *proj, int dur, int age);
 
 // ============================================================
 // Pipeline di display/touch (validata nel bring-up)
@@ -804,6 +806,8 @@ static void load_persisted() {
   g_heatMode = g_prefs.getInt("heatm", 3);
   g_perfOn = g_prefs.getBool("perf", false);
   g_resetAlert = g_prefs.getBool("rstal", true);
+  g_ccAlert = g_prefs.getInt("ccal", 2);
+  if (g_ccAlert < 0 || g_ccAlert > 3) g_ccAlert = 2;
   g_nightIdx = g_prefs.getInt("night", 0);
   if (g_nightIdx < 0 || g_nightIdx > 3) g_nightIdx = 0;
   g_nightPause = g_prefs.getBool("nightp", true);
@@ -1721,6 +1725,30 @@ static void handlePcPair() {
   home_redraw();
   g_web->send(200, "application/json", "{\"ok\":true}");
 }
+// evento degli hook di Claude Code inoltrato da Ritmo Code PC Monitor: solo dal PC collegato
+static void handleClaudeEvent() {
+  String host = g_pcHost;
+  int c = host.indexOf(':');
+  if (c >= 0) host.remove(c);
+  IPAddress pc;
+  if (!g_pcHost[0] || (pc.fromString(host) && g_web->client().remoteIP() != pc)) {
+    g_web->send(403, "application/json", "{\"ok\":false}");
+    return;
+  }
+  String ev = g_web->arg("ev"), proj = g_web->arg("proj");
+  if (ev != "busy" && ev != "done" && ev != "perm" && ev != "ask") {
+    g_web->send(400, "application/json", "{\"ok\":false}");
+    return;
+  }
+  char pj[28]; size_t n = 0;
+  for (size_t i = 0; i < proj.length() && n < sizeof(pj) - 1; i++) {
+    char ch = proj[i];
+    if (isalnum((unsigned char)ch) || ch == '.' || ch == '_' || ch == '-' || ch == ' ') pj[n++] = ch;
+  }
+  pj[n] = 0;
+  cc_event(g_web->arg("id").toInt(), ev.c_str(), pj, g_web->hasArg("dur") ? g_web->arg("dur").toInt() : -1, 0);
+  g_web->send(204, "text/plain", "");
+}
 static void handleHomePost() {
   String perr;
   if (!web_pin_ok(perr)) { g_web->send(403, "text/html; charset=utf-8", home_page(perr, false)); return; }
@@ -1771,6 +1799,7 @@ static void start_data_web() {
   g_web->on("/home", HTTP_GET, handleHomeGet);
   g_web->on("/home", HTTP_POST, handleHomePost);
   g_web->on("/pcpair", HTTP_POST, handlePcPair);
+  g_web->on("/claude", HTTP_POST, handleClaudeEvent);
   g_web->on("/update", HTTP_GET, handleUpdateGet);
   g_web->on("/update", HTTP_POST, handleUpdatePost, handleUpdateUpload);
   g_web->onNotFound([]() { g_web->send(404, "application/json", "{\"error\":\"not_found\"}"); });
@@ -3364,6 +3393,129 @@ static void moment_tick() {
   if (millis() > g_momentUntil) moment_close();
 }
 
+// ============================================================
+// Claude Code — avviso quando Claude ha finito o aspetta un permesso.
+// Hook di Claude Code -> Ritmo Code PC Monitor -> POST /claude (subito) o data.json (al giro dopo).
+// Resta a schermo finche' non lo tocchi o scrivi di nuovo a Claude (evento "busy"), al massimo 30 min.
+// ============================================================
+static const uint16_t CC_MIN_S[4] = {0, 0, 60, 300};   // durata minima del lavoro per l'avviso di fine
+#define CC_MAX_MS (30UL * 60UL * 1000UL)
+struct CcUI { lv_obj_t *scrim, *box, *frame, *ask; uint32_t t0, col; bool done, idle; };
+static CcUI g_cc = {};
+static long g_ccSeen = 0;                      // id dell'ultimo evento gia' visto (crescono sempre)
+static bool g_ccPend = false;
+static char g_ccEv[8], g_ccProj[28];
+static int  g_ccDur = -1;
+static uint32_t g_ccT0 = 0;                    // != 0: avviso da rimettere dopo un rebuild (stesso inizio)
+
+static void cc_close() {
+  if (!g_cc.scrim) return;
+  lv_obj_delete(g_cc.scrim);
+  memset(&g_cc, 0, sizeof(g_cc));
+}
+static void cc_close_cb(lv_event_t *e) { (void)e; cc_close(); }
+
+static void cc_event(long id, const char *ev, const char *proj, int dur, int age) {
+  if (id <= g_ccSeen) return;                  // gia' visto (arriva sia dal POST sia da data.json)
+  g_ccSeen = id;
+  if (age > 120) return;                       // vecchio: letto all'avvio o dopo che il pc non rispondeva
+  Serial.printf("[CLAUDE] %s %s (%d s)\n", ev, proj, dur);
+  if (!strcmp(ev, "busy")) { g_ccPend = false; cc_close(); return; }   // sei tornato a scrivere a Claude
+  if (!g_ccAlert) return;
+  if (!strcmp(ev, "done") && dur >= 0 && dur < CC_MIN_S[g_ccAlert]) return;
+  strlcpy(g_ccEv, ev, sizeof(g_ccEv));
+  strlcpy(g_ccProj, proj, sizeof(g_ccProj));
+  g_ccDur = dur;
+  g_ccPend = true;
+}
+
+static void cc_show() {
+  cc_close();
+  bool done = !strcmp(g_ccEv, "done"), ask = !strcmp(g_ccEv, "ask");
+  g_cc.done = done;
+  g_cc.col = done ? C_OK : C_ACCENT;
+  g_cc.t0 = g_ccT0 ? g_ccT0 : millis();
+  g_ccT0 = 0;
+
+  lv_obj_t *s = plain_obj(lv_layer_top());
+  g_cc.scrim = s;
+  lv_obj_set_pos(s, 0, 0); lv_obj_set_size(s, 480, 320);
+  lv_obj_set_style_bg_color(s, lv_color_hex(C_BG), 0);
+  lv_obj_set_style_bg_opa(s, LV_OPA_COVER, 0);
+  lv_obj_add_flag(s, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(s, cc_close_cb, LV_EVENT_CLICKED, NULL);
+
+  char lg[48];
+  if (g_ccProj[0]) snprintf(lg, sizeof(lg), "claude code " U_MIDDOT " %s", g_ccProj);
+  else             strcpy(lg, "claude code");
+  lv_obj_t *lgl = nullptr;
+  g_cc.frame = tbox(s, 10, 14, 460, 296, lg, g_cc.col, &lgl);
+  if (lgl) lv_obj_set_style_text_color(lgl, lv_color_hex(g_cc.col), 0);
+
+  lv_obj_t *bx = plain_obj(s);
+  g_cc.box = bx;
+  lv_obj_set_pos(bx, 30, 64);
+  lv_obj_set_size(bx, 176, 116);
+  lv_obj_t *img = lv_image_create(bx);
+  lv_image_set_src(img, &img_clawd_xl);
+  lv_obj_set_pos(img, 0, 0);
+  if (!done) g_cc.ask = tstatic(bx, "?", F22, C_TEXT, 154, 0);    // punto di domanda sopra Clawd
+
+  tstatic(s, done ? TRS("claude ha finito", "claude is done") : TRS("claude ti aspetta", "claude needs you"),
+          F14, C_MUTED, 234, 46);
+  char b[48];
+  if (done && g_ccDur >= 0) {                  // durata del lavoro in grande
+    lv_obj_t *r = trow(s, 232, 72);
+    int v = g_ccDur >= 60 ? (g_ccDur + 30) / 60 : g_ccDur;
+    snprintf(b, sizeof(b), "%d", v);
+    mklabel(r, b, F54, g_cc.col);
+    mklabel(r, g_ccDur >= 60 ? " min" : " s", F22, C_MUTED);
+  } else {
+    tstatic(s, done ? TRS("fatto", "done") : ask ? TRS("una domanda", "a question") : TRS("un permesso", "a permission"),
+            F22, g_cc.col, 234, 92);
+  }
+  const char *msg = done ? TRS("tocca a te: rivedi e continua", "your turn: review and continue")
+                  : ask  ? TRS("ha una domanda per te", "has a question for you")
+                         : TRS("serve un tuo permesso per continuare", "needs your permission to continue");
+  tstatic(s, ">", F14, C_ACCENT, 234, 138);
+  lv_obj_t *m = tstatic(s, msg, F14, C_TEXT, 252, 138);
+  lv_obj_set_width(m, 204);
+  lv_label_set_long_mode(m, LV_LABEL_LONG_WRAP);
+  char hm[12]; hm[0] = 0;
+  time_t now = time(nullptr);
+  if (now > 1000000000L) {
+    fmt_hm((uint32_t)now, hm, sizeof(hm));
+    snprintf(b, sizeof(b), done ? TRS("alle %s", "at %s") : TRS("dalle %s", "since %s"), hm);
+    tstatic(s, b, F12, C_MUTED, 234, 222);
+  }
+  tstatic(s, TRS("[ tocca per chiudere ]", "[ tap to close ]"), F12, C_FAINT, 290, 280);
+}
+
+// Animazione piena nei primi 20 s, poi un richiamo ogni 15 s: niente ridisegni continui per mezz'ora.
+static void cc_tick() {
+  if (!g_cc.scrim) return;
+  uint32_t t = millis() - g_cc.t0;
+  if (t > CC_MAX_MS) { cc_close(); return; }
+  uint32_t ph = t < 20000 ? t : (t - 20000) % 15000;
+  bool live = t < 20000 || ph < 1600;
+  if (!live && g_cc.idle) return;              // fermo: l'ultimo frame e' gia' a riposo
+  g_cc.idle = !live;
+  int y = 104;
+  if (t < 450) {
+    float p = t / 450.0f;
+    y = 104 - (int)((1.0f - p) * (1.0f - p) * 60.0f);
+  } else if (live && g_cc.done) {              // salta contento
+    uint32_t h = (t - 450) % 1600;
+    if (h < 400) y = 104 - (int)(16.0f * sinf(3.14159f * h / 400.0f));
+  } else if (live) {                           // ondeggia, il punto di domanda va su e giu'
+    y = 104 + (int)(3.0f * sinf(t / 400.0f));
+    if (g_cc.ask) lv_obj_set_y(g_cc.ask, (int)(3.0f - 3.0f * sinf(t / 300.0f)));
+  }
+  lv_obj_set_pos(g_cc.box, 30, y);
+  if (!g_cc.done && g_cc.frame)
+    lv_obj_set_style_border_color(g_cc.frame, lv_color_hex(live && (t / 600) % 2 ? C_BORDER : g_cc.col), 0);
+}
+
 // Riempie tutti i valori arrivati dal fetch (senza ricostruire la schermata).
 static void refresh_ui_values() {
   if (g_state != ST_MAIN || !g_ui.agPct5) return;
@@ -3746,6 +3898,11 @@ static void settings_action_cb(lv_event_t *e) {
       g_prefs.putBool("rstal", g_resetAlert);
       request_state(ST_SETTINGS);
       break;
+    case 23:                                           // avvisi claude code: sempre -> oltre 1 min -> oltre 5 min -> spento
+      g_ccAlert = (g_ccAlert + 1) % 4;
+      g_prefs.putInt("ccal", g_ccAlert);
+      request_state(ST_SETTINGS);
+      break;
     case 13:                                           // contatore FPS
       g_perfOn = !g_perfOn;
       g_prefs.putBool("perf", g_perfOn);
@@ -3779,6 +3936,10 @@ static void ui_settings() {
   kv_row(lst, TRS("fuso orario", "timezone"),     tz,                    C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)7, &g_tzLbl);
   kv_row(lst, TRS("avviso reset", "reset alert"), g_resetAlert ? TRS("sopra 80%", "above 80%") : TRS("spento", "off"),
          C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)15);
+  static const char *CC_LBL_IT[4] = {"spento", "sempre", "oltre 1 min", "oltre 5 min"};
+  static const char *CC_LBL_EN[4] = {"off", "always", "over 1 min", "over 5 min"};
+  kv_row(lst, TRS("avvisi claude code", "claude code alerts"), g_lang ? CC_LBL_EN[g_ccAlert] : CC_LBL_IT[g_ccAlert],
+         C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)23);
   kv_row(lst, TRS("luminosità", "brightness"),    bri_label(),           C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)3, &g_briLbl);
   static const char *NIGHT_LBL[4] = {"", "22:00-07:00", "23:00-07:00", "00:00-07:00"};
   char dim[16];
@@ -4216,6 +4377,10 @@ static void render_state() {
   g_state = g_pending;
   stop_web();                                 // ogni schermata avvia il server che le serve
   moment_close();                             // l'overlay vive in lv_layer_top
+  if (g_cc.scrim) {                           // l'avviso di Claude Code sopravvive ai rebuild del dashboard
+    if (g_state == ST_MAIN) { g_ccPend = true; g_ccT0 = g_cc.t0; }
+    cc_close();
+  }
   pause_menu_close();
   night_clock_close();
   lv_obj_clean(lv_layer_top());
@@ -4587,6 +4752,7 @@ void loop() {
     g_pc = g_pcRes;
     if (g_pc.ok) {
       g_pcAtMs = millis();
+      if (g_pc.ccId) cc_event(g_pc.ccId, g_pc.ccEv, g_pc.ccProj, g_pc.ccDur, g_pc.ccAge);
     }
     if (g_pc.ok) {                                   // il grafico avanza a ogni lettura
       g_pcHistAtMs = millis();
@@ -4672,7 +4838,7 @@ void loop() {
         }
       }
     }
-    if (g_slideSec > 0 && g_ui.tv && !g_refreshing && !g_mo.scrim && g_screenMode < 2 &&
+    if (g_slideSec > 0 && g_ui.tv && !g_refreshing && !g_mo.scrim && !g_cc.scrim && g_screenMode < 2 &&
         now - g_lastTouchMs > 10000 && now - g_lastSlideMs > (uint32_t)g_slideSec * 1000) {
       g_lastSlideMs = now;
       int next = (g_curTile + 1) % NTILES;
@@ -4686,7 +4852,7 @@ void loop() {
     }
     // torna alla home dopo N minuti senza tocchi (una volta per periodo di inattivita')
     static uint32_t homedFor = 0;
-    if (g_clockIdx && g_ui.tv && g_curTile != 0 && !g_mo.scrim && !g_pauseMenu && g_screenMode < 2 &&
+    if (g_clockIdx && g_ui.tv && g_curTile != 0 && !g_mo.scrim && !g_cc.scrim && !g_pauseMenu && g_screenMode < 2 &&
         homedFor != g_lastTouchMs && now - g_lastTouchMs > CLOCK_MIN[g_clockIdx] * 60000UL) {
       homedFor = g_lastTouchMs;
       lv_tileview_set_tile_by_index(g_ui.tv, 0, 0, LV_ANIM_ON);
@@ -4698,6 +4864,14 @@ void loop() {
       g_pendWin = -1;
     }
     if (g_mo.scrim) moment_tick();
+    // Claude Code: riaccende lo schermo attenuato; di notte (schermo spento o orologio) niente avviso
+    if (g_ccPend && g_screenMode >= 2) { g_ccPend = false; g_ccT0 = 0; }
+    if (g_ccPend && !g_mo.scrim && !g_refreshing) {
+      g_ccPend = false;
+      if (!g_ccT0) g_lastTouchMs = millis();     // avviso nuovo: riaccende lo schermo attenuato
+      cc_show();
+    }
+    if (g_cc.scrim) cc_tick();
   }
 
   delay(5);

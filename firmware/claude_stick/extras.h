@@ -49,6 +49,12 @@ struct PcStats {
   PcTemp board[6];
   float  ramTemps[4];
   PcDrive drives[4];
+  // ultimo evento degli hook di Claude Code (id 0 = nessuno)
+  long  ccId;
+  char  ccEv[8];           // busy, done, perm, ask
+  char  ccProj[28];
+  int   ccDur, ccAge;      // secondi (ccDur -1 = sconosciuta)
+  int   ccBusy;            // sessioni al lavoro
 };
 
 bool fetchWeather(float lat, float lon, WeatherData& out);

@@ -46,7 +46,7 @@ const pad2 = (n) => String(n).padStart(2, '0');
 
 // ---------- stato persistente (NVS simulata) ----------
 const TZ_ROME = 99;
-const P = { lang: 0, tz: TZ_ROME, poll: 120, slide: 0, heatm: 3, bri: 1, pinatt: 0, rstal: true, night: 0, nightp: true, dim: 0, pause: false, pauseUntil: 0, clock: 0, nightclk: true, nightbri: 0 };
+const P = { lang: 0, tz: TZ_ROME, poll: 120, slide: 0, heatm: 3, bri: 1, pinatt: 0, rstal: true, ccal: 2, night: 0, nightp: true, dim: 0, pause: false, pauseUntil: 0, clock: 0, nightclk: true, nightbri: 0 };
 const TRS = (pt, en) => (P.lang ? en : pt);
 
 // ---------- stato app ----------
@@ -1381,6 +1381,57 @@ function momentTick() {
 }
 
 // ============================================================
+// Claude Code: avviso di fine lavoro / permesso (hook -> PC Monitor -> POST /claude)
+// ============================================================
+const CC_MIN_S = [0, 0, 60, 300];
+let CC = null;
+function ccClose() { if (CC) { CC.scrim.remove(); CC = null; } }
+function ccEvent(ev, proj, dur) {
+  if (ev === 'busy') { G.ccPend = null; ccClose(); return; }
+  if (!P.ccal) return;
+  if (ev === 'done' && dur >= 0 && dur < CC_MIN_S[P.ccal]) { slog(`[CLAUDE] fine lavoro dopo ${dur} s: sotto la soglia, nessun avviso`); return; }
+  G.ccPend = { ev, proj, dur };
+}
+function ccShow(e, t0) {
+  ccClose();
+  const done = e.ev === 'done', ask = e.ev === 'ask', col = done ? C.OK : C.ACCENT;
+  const s = obj(scr, 0, 0, 480, 320, { background: C.BG, zIndex: 49, cursor: 'pointer' });
+  CC = { scrim: s, e, done, col, t0: t0 || realMs() };
+  s.addEventListener('click', (ev) => { ev.stopPropagation(); ccClose(); });
+  const frame = tbox(s, 10, 14, 460, 296, e.proj ? `claude code · ${escapeHtml(e.proj)}` : 'claude code', col);
+  frame._lg.style.color = col; CC.frame = frame;
+  const bx = obj(s, 30, 64, 176, 116); CC.box = bx;
+  const img = clawdImg(bx, 'xl', C.ACCENT); img.style.left = '0px'; img.style.top = '0px';
+  if (!done) CC.ask = label(bx, '?', 22, C.TEXT, 154, 0);
+  label(s, done ? TRS('claude ha finito', 'claude is done') : TRS('claude ti aspetta', 'claude needs you'), 13, C.MUTED, 234, 48);
+  if (done && e.dur >= 0) {
+    const v = e.dur >= 60 ? Math.round(e.dur / 60) : e.dur;
+    const n = label(s, `${v}<small>${e.dur >= 60 ? ' min' : ' s'}</small>`, 54, col, 232, 68); n.classList.add('pctl');
+  } else {
+    label(s, done ? TRS('fatto', 'done') : ask ? TRS('una domanda', 'a question') : TRS('un permesso', 'a permission'), 22, col, 234, 92);
+  }
+  const msg = done ? TRS('tocca a te: rivedi e continua', 'your turn: review and continue')
+    : ask ? TRS('ha una domanda per te', 'has a question for you') : TRS('serve un tuo permesso per continuare', 'needs your permission to continue');
+  const m = label(s, `${GT} ${msg}`, 14, C.TEXT, 234, 140); m.classList.add('wrap'); m.style.width = '222px';
+  label(s, (done ? TRS('alle ', 'at ') : TRS('dalle ', 'since ')) + fmtHm(nowEpoch()), 12, C.MUTED, 234, 220);
+  label(s, TRS('[ tocca per chiudere ]', '[ tap to close ]'), 11, C.FAINT, 292, 284);
+  ccTick();
+}
+// animazione piena nei primi 20 s, poi un richiamo ogni 15 s (come sul dispositivo)
+function ccTick() {
+  if (!CC) return;
+  const t = realMs() - CC.t0;
+  if (t * speed > 30 * 60000) { ccClose(); return; }
+  const ph = t < 20000 ? t : (t - 20000) % 15000, live = t < 20000 || ph < 1600;
+  let y = 104;
+  if (t < 450) { const p = t / 450; y = 104 - Math.floor((1 - p) * (1 - p) * 60); }
+  else if (live && CC.done) { const h = (t - 450) % 1600; if (h < 400) y = 104 - Math.trunc(16 * Math.sin(Math.PI * h / 400)); }
+  else if (live) { y = 104 + Math.trunc(3 * Math.sin(t / 400)); if (CC.ask) CC.ask.style.top = Math.trunc(3 - 3 * Math.sin(t / 300)) + 'px'; }
+  CC.box.style.top = y + 'px';
+  if (!CC.done) CC.frame.style.borderColor = live && Math.floor(t / 600) % 2 ? C.BORDER : CC.col;
+}
+
+// ============================================================
 // Impostazioni / account / about
 // ============================================================
 const POLL_OPTS = [30, 60, 120, 300, 600, 900, 1800], TZ_OPTS = [TZ_ROME, 0, 1, 2, 3, 4, 5, -1, -2, -3, -4, -5, -6, -7, -8], SL = [0, 5, 10, 15, 30];
@@ -1411,6 +1462,8 @@ function uiSettings() {
   kvRow(lst, TRS('lingua', 'language'), TRS('italiano', 'english'), () => { P.lang ^= 1; requestState(ST.SETTINGS); });
   kvRow(lst, TRS('fuso orario', 'timezone'), tzVal(), (v) => { const i = TZ_OPTS.indexOf(P.tz); P.tz = TZ_OPTS[(i + 1) % TZ_OPTS.length]; setText(v, tzVal()); });
   kvRow(lst, TRS('avviso reset', 'reset alert'), P.rstal ? TRS('sopra 80%', 'above 80%') : TRS('spento', 'off'), () => { P.rstal = !P.rstal; requestState(ST.SETTINGS); });
+  const CCL = [TRS('spento', 'off'), TRS('sempre', 'always'), TRS('oltre 1 min', 'over 1 min'), TRS('oltre 5 min', 'over 5 min')];
+  kvRow(lst, TRS('avvisi claude code', 'claude code alerts'), CCL[P.ccal], () => { P.ccal = (P.ccal + 1) % 4; requestState(ST.SETTINGS); });
   kvRow(lst, TRS("luminosita'", 'brightness'), briN(), (v) => { P.bri = (P.bri + 1) % 3; applyBrightness(); setText(v, briN()); });
   const NL = ['', '22:00-07:00', '23:00-07:00', '00:00-07:00'];
   kvRow(lst, TRS('notte', 'night'), P.night ? NL[P.night] : TRS('spento', 'off'), () => { P.night = (P.night + 1) % 4; requestState(ST.SETTINGS); });
@@ -1624,6 +1677,8 @@ for (const ev of ['pointerdown', 'click']) {
 // ============================================================
 function clearScreen() {
   momentClose(); PMENU = null; NC = null;
+  // l'avviso di Claude Code sopravvive ai rebuild del dashboard (stesso inizio)
+  if (CC) { if (pending === ST.MAIN) { G.ccPend = CC.e; G.ccT0 = CC.t0; } ccClose(); }
   scr.innerHTML = '';
   UI = {}; hdrStatus = null; pinDots = pinMsg = tokMsg = null; activeTA = null;
 }
@@ -1725,15 +1780,21 @@ function loop() {
       blinkAt = r; blinkClosed = !blinkClosed;
       masc.forEach((m) => { if (m.mood === 1) m.lid.forEach((l) => { l.style.display = blinkClosed ? '' : 'none'; }); });
     }
-    if (P.slide > 0 && UI.tv && !G.refreshing && !MO && G.screenMode < 2 && r - G.lastTouch > 10000 && r - G.lastSlide > P.slide * 1000) {
+    if (P.slide > 0 && UI.tv && !G.refreshing && !MO && !CC && G.screenMode < 2 && r - G.lastTouch > 10000 && r - G.lastSlide > P.slide * 1000) {
       G.lastSlide = r; setTile((G.curTile + 1) % NTILES, true);
     }
     if (P.pause && P.pauseUntil && nowEpoch() >= P.pauseUntil) pauseSet(false, 0);
     // torna alla home dopo N minuti senza tocchi (una volta per periodo di inattivita')
-    if (P.clock && UI.tv && G.curTile !== 0 && !MO && !PMENU && G.screenMode < 2 && G.homedFor !== G.lastTouch &&
+    if (P.clock && UI.tv && G.curTile !== 0 && !MO && !CC && !PMENU && G.screenMode < 2 && G.homedFor !== G.lastTouch &&
         (r - G.lastTouch) * speed > CLOCK_MIN[P.clock] * 60000) { G.homedFor = G.lastTouch; setTile(0, true); }
     if (G.pendWin >= 0 && !MO && !G.refreshing && G.screenMode < 2) { showMoment(G.pendWin, G.pendThr); G.pendWin = -1; }
     if (MO) momentTick();
+    if (G.ccPend && G.screenMode >= 2) { G.ccPend = null; G.ccT0 = 0; }
+    if (G.ccPend && !MO && !G.refreshing) {
+      if (!G.ccT0) { touched(); if (G.screenMode) { G.screenMode = 0; applyBrightness(); } }
+      ccShow(G.ccPend, G.ccT0); G.ccPend = null; G.ccT0 = 0;
+    }
+    if (CC) ccTick();
   }
   if ((state === ST.PIN || state === ST.SETUP_PIN) && pinMsg && G.lockoutUntil > 0) {
     if (millis() < G.lockoutUntil) setText(pinMsg, TRS(`Attendi ${Math.ceil((G.lockoutUntil - millis()) / 1000)}s`, `Wait ${Math.ceil((G.lockoutUntil - millis()) / 1000)}s`));
@@ -1810,6 +1871,11 @@ function initPanel() {
     if (state !== ST.MAIN) { slog('[SIM] i momenti si vedono sul dashboard'); return; }
     showMoment(+b.dataset.w, +b.dataset.t);
   });
+  $('ccBtns').addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (state !== ST.MAIN) { slog('[SIM] gli avvisi si vedono sul dashboard'); return; }
+    ccEvent(b.dataset.ev, 'ritmo-code', +b.dataset.dur);
+  });
   document.querySelector('.panel').addEventListener('click', (e) => {
     const act = e.target.dataset && e.target.dataset.act; if (!act) return;
     if (act === 'boot-token') boot(true);
@@ -1832,7 +1898,7 @@ function initPanel() {
 }
 
 // accesso per tools/capture_screens.js (immagini del README)
-window.__sim = { API, G, ST, P, boot, requestState, setTile, refreshUiValues, dashTick, showMoment, momentClose, pauseMenuOpen, pauseMenuClose, nightClockShow, nightClockClose };
+window.__sim = { API, G, ST, P, boot, requestState, setTile, refreshUiValues, dashTick, showMoment, momentClose, ccEvent, ccClose, pauseMenuOpen, pauseMenuClose, nightClockShow, nightClockClose };
 initPanel();
 applyBrightness();
 boot(true);

@@ -76,6 +76,7 @@ nessuna richiesta in più ad Anthropic, e il token non viene mai esposto.
 - **Ritmo settimanale**: percentuale usata meno percentuale di settimana trascorsa. Verde se sei sotto ritmo, ambra fino a +15%, rosso oltre. Alternato alla **previsione**: "al reset arrivi al ~70%" oppure "a questo ritmo finisce gio 14:00".
 - **Storico settimanale**: picco di ogni settimana, salvato sul dispositivo per account.
 - **Avvisi** di soglia (25/50/70/100%) e di **reset** (disattivabile).
+- **Avvisi di Claude Code**: Clawd ti dice quando Claude ha finito un lavoro (con la durata) o aspetta un permesso, tramite gli hook e l'app [PC Monitor](#ritmo-code-pc-monitor).
 - **Modelli**: una sonda per ciclo a rotazione. Gli **ID sono modificabili** dal dispositivo o dal browser: se Anthropic rinomina un modello non serve ricompilare.
 - **Modalità notte** in una fascia oraria (22, 23 o 00 → 07): **orologio a tutto schermo** con luminosità tenue o molto tenue, oppure schermo spento, e di predefinito **aggiornamenti in pausa**. Il primo tocco riaccende soltanto, senza premere nulla. **Attenuazione** dopo 1, 5 o 10 minuti senza tocchi.
 - **Pausa richieste** dal tasto in testata, senza limite o a tempo; riparte da sola.
@@ -165,6 +166,30 @@ L'app resta vicino all'orologio di Windows con l'icona di Clawd:
 - **passandoci sopra** mostra CPU, GPU, RAM e se il dispositivo sta leggendo i dati;
 - **doppio clic** apre la pagina di stato e collegamento;
 - **clic destro** apre il pannello del dispositivo o chiude l'app (**Esci**).
+
+**5. Avvisi di Claude Code**
+
+<img src="assets/screen-claude.png" width="400" align="right" alt="Avviso: Claude ha finito">
+
+Il dispositivo può avvisarti quando Claude Code **ha finito** un lavoro o **aspetta un tuo permesso**,
+anche se stai guardando un'altra finestra o ti sei alzato dalla scrivania.
+
+1. Nella pagina **`http://127.0.0.1:8765/`**, riquadro *avvisi di claude code*, premi **Attiva gli avvisi**.
+   L'app aggiunge tre [hook](https://docs.claude.com/en/docs/claude-code/hooks) a
+   `~/.claude/settings.json` (`UserPromptSubmit`, `Stop`, `Notification`) senza toccare il resto del file;
+   la prima volta ne salva una copia in `settings.json.ritmo-bak`.
+2. Apri una nuova sessione di Claude Code: gli hook valgono per le sessioni avviate dopo.
+
+Gli hook chiamano solo `http://127.0.0.1:8765` e l'app inoltra l'avviso al dispositivo, che lo accetta
+solo dal PC collegato. Arriva il nome della cartella del progetto, niente del contenuto della sessione.
+A schermo l'avviso resta finché non lo tocchi o scrivi di nuovo a Claude (al massimo 30 minuti); di
+notte, con lo schermo spento o l'orologio notturno, non compare. In *Impostazioni → avvisi claude code*
+scegli quando mostrarlo: **sempre**, solo per lavori **oltre 1 min** (predefinito) o **oltre 5 min**,
+oppure **spento**. Le richieste di permesso compaiono sempre, tranne con *spento*.
+
+Per toglierli: **Disattiva** nella stessa pagina.
+
+<br clear="right">
 
 **Problemi comuni**
 

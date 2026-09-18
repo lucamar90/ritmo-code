@@ -79,6 +79,7 @@ Anthropic, and the token is never exposed.
 - **Weekly pace**: percentage used minus percentage of the week elapsed. Green when under pace, amber up to +15%, red beyond. Alternates with a **forecast**: "at reset you reach ~70%" or "at this pace ends thu 14:00".
 - **Weekly history**: the peak of every week, stored on the device per account.
 - Threshold **alerts** (25/50/70/100%) and a **reset** alert (can be turned off).
+- **Claude Code alerts**: Clawd tells you when Claude has finished a task (with how long it took) or needs a permission, via hooks and the [PC Monitor](#ritmo-code-pc-monitor) app.
 - **Models**: one probe per cycle, rotating. **Model IDs are editable** on the device or in the browser, so a renamed model needs no rebuild.
 - **Night mode** during a time band (22, 23 or 00 → 07): a **full-screen clock**, dim or very dim, or the screen off, and by default **updates paused**. The first tap only wakes the screen, without pressing anything. **Dimming** after 1, 5 or 10 minutes without touches.
 - **Pause requests** from the header button, indefinitely or for a set time; resumes by itself.
@@ -169,6 +170,30 @@ The app sits next to the Windows clock with the Clawd icon:
 - **hover** shows CPU, GPU, RAM and whether the device is reading the data;
 - **double-click** opens the status and pairing page;
 - **right-click** opens the device panel or quits the app (**Esci**).
+
+**5. Claude Code alerts**
+
+<img src="assets/screen-claude.png" width="400" align="right" alt="Alert: Claude is done">
+
+The device can tell you when Claude Code **has finished** a task or **is waiting for your permission**,
+even while you are looking at another window or away from the desk.
+
+1. On **`http://127.0.0.1:8765/`**, box *avvisi di claude code*, press **Attiva gli avvisi**.
+   The app adds three [hooks](https://docs.claude.com/en/docs/claude-code/hooks) to
+   `~/.claude/settings.json` (`UserPromptSubmit`, `Stop`, `Notification`) and leaves the rest of the file
+   alone; the first time it keeps a copy in `settings.json.ritmo-bak`.
+2. Start a new Claude Code session: hooks apply to sessions started afterwards.
+
+The hooks only call `http://127.0.0.1:8765`, and the app forwards the alert to the device, which accepts
+it only from the paired PC. The project folder name is sent, nothing from the session itself. The alert
+stays on screen until you tap it or write to Claude again (30 minutes at most); at night, with the screen
+off or the night clock on, it does not show. In *Settings → claude code alerts* choose when to show it:
+**always**, only for tasks **over 1 min** (default) or **over 5 min**, or **off**. Permission requests
+always show unless it is *off*.
+
+To remove them: **Disattiva** on the same page.
+
+<br clear="right">
 
 **Troubleshooting**
 

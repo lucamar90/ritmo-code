@@ -28,7 +28,7 @@ import winreg
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP = "ritmo-code-pc-monitor"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 DEFAULT_PORT = 8765
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "RitmoCodePcMonitor")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
@@ -445,6 +445,152 @@ def pair_device(ip, pin, port):
     return result
 
 
+# ---------------------------------------------------------------------------
+# Claude Code: gli hook avvisano quando Claude ha finito o aspetta un permesso
+# ---------------------------------------------------------------------------
+
+CLAUDE_SETTINGS = os.path.join(os.path.expanduser("~"), ".claude", "settings.json")
+HOOK_EVENTS = {"UserPromptSubmit": "prompt", "Stop": "stop", "Notification": "notify"}
+HOOK_RE = re.compile(r"127\.0\.0\.1:\d+/claude/(prompt|stop|notify)")
+
+
+def hook_command(port, kind):
+    # l'input JSON dell'hook passa su stdin; "|| exit 0" se il monitor e' spento (bash e cmd)
+    return f"curl -s -m 2 --data-binary @- http://127.0.0.1:{port}/claude/{kind} || exit 0"
+
+
+def _load_claude_settings():
+    if not os.path.exists(CLAUDE_SETTINGS):
+        return {}
+    with open(CLAUDE_SETTINGS, "r", encoding="utf-8") as fh:
+        text = fh.read()
+    return json.loads(text) if text.strip() else {}
+
+
+def _without_ours(groups):
+    """Gruppi di hook senza i comandi di Ritmo Code (i gruppi rimasti vuoti vengono tolti)."""
+    kept = []
+    for group in groups if isinstance(groups, list) else []:
+        hooks = [h for h in group.get("hooks", []) if not HOOK_RE.search(str(h.get("command", "")))]
+        if hooks:
+            kept.append({**group, "hooks": hooks})
+    return kept
+
+
+def hooks_status(port):
+    try:
+        hooks = _load_claude_settings().get("hooks", {})
+    except Exception as error:
+        return {"ok": False, "error": f"settings.json non leggibile ({error})"}
+    found = {event for event, groups in hooks.items() for group in groups if isinstance(group, dict)
+             for h in group.get("hooks", []) if HOOK_RE.search(str(h.get("command", "")))}
+    current = all(any(hook_command(port, kind) == h.get("command") for group in hooks.get(event, [])
+                      for h in group.get("hooks", [])) for event, kind in HOOK_EVENTS.items())
+    return {"ok": True, "installed": found == set(HOOK_EVENTS) and current, "partial": bool(found), "path": CLAUDE_SETTINGS}
+
+
+def hooks_write(port, install):
+    """Aggiunge o toglie gli hook di Ritmo Code in ~/.claude/settings.json lasciando intatto il resto."""
+    try:
+        settings = _load_claude_settings()
+    except Exception as error:
+        return {"ok": False, "error": f"settings.json non leggibile, non lo modifico ({error})"}
+    hooks = settings.get("hooks") if isinstance(settings.get("hooks"), dict) else {}
+    for event in list(hooks):
+        hooks[event] = _without_ours(hooks[event])
+        if not hooks[event]:
+            del hooks[event]
+    if install:
+        for event, kind in HOOK_EVENTS.items():
+            hooks.setdefault(event, []).append({"hooks": [{"type": "command", "command": hook_command(port, kind), "timeout": 5}]})
+    if hooks:
+        settings["hooks"] = hooks
+    else:
+        settings.pop("hooks", None)
+    os.makedirs(os.path.dirname(CLAUDE_SETTINGS), exist_ok=True)
+    backup = CLAUDE_SETTINGS + ".ritmo-bak"
+    if os.path.exists(CLAUDE_SETTINGS) and not os.path.exists(backup):
+        with open(CLAUDE_SETTINGS, "rb") as src, open(backup, "wb") as dst:
+            dst.write(src.read())
+    tmp = CLAUDE_SETTINGS + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(settings, fh, indent=2, ensure_ascii=False)
+        fh.write("\n")
+    os.replace(tmp, CLAUDE_SETTINGS)
+    return {"ok": True, **hooks_status(port)}
+
+
+class ClaudeEvents:
+    """Stato delle sessioni di Claude Code dagli hook: chi sta lavorando e l'ultimo evento da mostrare.
+
+    Eventi per il dispositivo: busy (hai scritto a Claude), done (ha finito), perm (serve un
+    permesso), ask (ha una domanda). L'id cresce sempre, cosi' il dispositivo li mostra una volta sola.
+    """
+
+    STALE_S = 3 * 3600
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.working = {}            # session_id -> inizio del turno
+        self.last = None
+        self.last_id = 0
+
+    @staticmethod
+    def _project(payload):
+        name = os.path.basename(str(payload.get("cwd", "")).rstrip("\\/"))
+        return re.sub(r"[^0-9A-Za-z._ -]", "", name)[:24]
+
+    def handle(self, kind, payload):
+        now = time.time()
+        session = str(payload.get("session_id", ""))
+        with self.lock:
+            self.working = {s: t for s, t in self.working.items() if now - t < self.STALE_S}
+            if kind == "prompt":
+                self.working[session] = now
+                ev, dur = "busy", -1
+            elif kind == "stop":
+                started = self.working.pop(session, None)
+                ev, dur = "done", int(now - started) if started else -1
+            else:
+                ntype = str(payload.get("notification_type", ""))
+                message = str(payload.get("message", "")).lower()
+                if ntype == "permission_prompt" or (not ntype and "permission" in message):
+                    ev = "perm"
+                elif ntype == "elicitation_dialog":
+                    ev = "ask"
+                else:
+                    return None                  # "ti aspetta" dopo 60 s di inattivita' e altro: niente avviso
+                dur = -1
+            self.last_id = max(self.last_id + 1, int(now) % 1_000_000_000)
+            self.last = {"id": self.last_id, "ev": ev, "proj": self._project(payload), "dur": dur, "at": now}
+            return dict(self.last)
+
+    def fields(self):
+        """Campi per data.json (piatti: il dispositivo ha un parser minimo)."""
+        with self.lock:
+            now = time.time()
+            data = {"cc_busy": sum(1 for t in self.working.values() if now - t < self.STALE_S)}
+            if self.last:
+                data.update({"cc_ev_id": self.last["id"], "cc_ev": self.last["ev"], "cc_ev_proj": self.last["proj"],
+                             "cc_ev_dur": self.last["dur"], "cc_ev_age": int(now - self.last["at"])})
+            return data
+
+
+CLAUDE = ClaudeEvents()
+
+
+def push_event(event):
+    """Manda subito l'evento al dispositivo; se non risponde, lo legge comunque da data.json."""
+    ip = DEVICE_SEEN["ip"] if DEVICE_SEEN["ip"] and time.time() - DEVICE_SEEN["at"] < 600 else load_config().get("device")
+    if not ip:
+        return
+    body = urllib.parse.urlencode({k: event[k] for k in ("id", "ev", "proj", "dur")}).encode()
+    try:
+        urllib.request.urlopen(urllib.request.Request(f"http://{ip}/claude", data=body, method="POST"), timeout=2).close()
+    except Exception:
+        pass
+
+
 STATUS_PAGE = """<!doctype html><html lang="it"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Ritmo Code PC Monitor</title>
 <style>
@@ -467,6 +613,10 @@ code{color:var(--ac)}
  <div class=form><select id=sel hidden></select><input id=pin type=password inputmode=numeric maxlength=4 placeholder="PIN" size=6>
  <button id=go>Collega questo PC</button><button id=scan>Cerca di nuovo</button></div><div id=msg></div>
  <p class=k style="margin:10px 0 0">Il PIN serve solo ad autorizzare il collegamento e non viene salvato.</p></div>
+<div class=box><span class=lg>avvisi di claude code</span><div id=hk class=k>controllo in corso...</div>
+ <div class=form><button id=hkon>Attiva gli avvisi</button><button id=hkoff>Disattiva</button></div>
+ <p class=k style="margin:10px 0 0">Aggiunge tre hook a <code>~/.claude/settings.json</code> (il resto del file non cambia): il dispositivo
+ mostra quando Claude ha finito o aspetta un permesso. Valgono per le sessioni di Claude Code aperte da ora in poi.</p></div>
 </main><script>
 var $=function(i){return document.getElementById(i)};
 function pc(){fetch('/data.json').then(function(r){return r.json()}).then(function(d){
@@ -484,7 +634,15 @@ $('go').onclick=function(){var b=this;b.disabled=true;$('msg').textContent='';
  .then(function(r){return r.json()}).then(function(j){b.disabled=false;$('pin').value='';
   $('msg').innerHTML=j.ok?'<span class=okc>Collegato: il dispositivo ora legge '+j.pc+'</span>':'<span class=warn>'+(j.error||'errore')+'</span>';if(j.ok)setTimeout(scan,4000)})
  .catch(function(){b.disabled=false})};
-pc();setInterval(pc,2000);scan();
+var EV={busy:'al lavoro',done:'ha finito',perm:'aspetta un permesso',ask:'ha una domanda'};
+function hk(j){if(!j.ok){$('hk').innerHTML='<span class=warn>'+j.error+'</span>';return}
+ var last=j.last?' &middot; ultimo evento: <b>'+EV[j.last.ev]+'</b>'+(j.last.proj?' ('+j.last.proj+')':'')+' '+j.last.age+' s fa':'';
+ $('hk').innerHTML=(j.installed?'<span class=okc>attivi</span>':j.partial?'<span class=warn>da aggiornare</span>':'<span class=warn>non attivi</span>')+last}
+function hks(){fetch('/api/hooks').then(function(r){return r.json()}).then(hk)}
+function hkset(on){fetch('/api/hooks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({install:on})})
+ .then(function(r){return r.json()}).then(hk)}
+$('hkon').onclick=function(){hkset(true)};$('hkoff').onclick=function(){hkset(false)};
+pc();setInterval(pc,2000);scan();hks();setInterval(hks,5000);
 </script></body></html>"""
 
 
@@ -511,6 +669,7 @@ def make_handler(sampler, lhm, port):
                 if not self._local():
                     DEVICE_SEEN.update(ip=self.client_address[0], at=time.time())
                 data = sampler.snapshot()
+                data.update(CLAUDE.fields())
                 data.update({"app": APP, "version": VERSION})
                 self._send(200, "application/json", json.dumps(data))
             elif path == "/" and self._local():
@@ -525,18 +684,55 @@ def make_handler(sampler, lhm, port):
                     cfg["device"] = devices[0]["ip"]
                     save_config(cfg)
                 self._send(200, "application/json", json.dumps(devices))
+            elif path == "/api/hooks" and self._local():
+                self._send(200, "application/json", json.dumps(self._hooks(hooks_status(port))))
             elif path == "/":
                 self._send(200, "text/plain; charset=utf-8", f"Ritmo Code PC Monitor {VERSION}: dati su /data.json")
             else:
                 self._send(404, "text/plain", "not found")
 
+        @staticmethod
+        def _hooks(result):
+            fields = CLAUDE.fields()
+            if "cc_ev_id" in fields:
+                result["last"] = {"ev": fields["cc_ev"], "proj": fields["cc_ev_proj"], "age": fields["cc_ev_age"]}
+            return result
+
+        def _body(self):
+            length = min(int(self.headers.get("Content-Length", "0") or 0), 1 << 20)
+            return json.loads(self.rfile.read(length).decode("utf-8", "replace") or "{}")
+
         def do_POST(self):
-            if self.path != "/api/pair" or not self._local():
+            path = self.path.split("?")[0]
+            if not self._local():
+                self._send(404, "text/plain", "not found")
+                return
+            if path.startswith("/claude/"):          # hook di Claude Code: nessuna risposta (finirebbe nel contesto)
+                kind = path[len("/claude/"):]
+                try:
+                    payload = self._body()
+                except Exception:
+                    payload = {}
+                self.send_response(204)
+                self.send_header("Connection", "close")
+                self.end_headers()
+                event = CLAUDE.handle(kind, payload if isinstance(payload, dict) else {}) if kind in HOOK_EVENTS.values() else None
+                if event:
+                    threading.Thread(target=push_event, args=(event,), daemon=True).start()
+                return
+            if path == "/api/hooks":
+                try:
+                    install = bool(self._body().get("install"))
+                except Exception:
+                    self._send(400, "application/json", json.dumps({"ok": False, "error": "richiesta non valida"}))
+                    return
+                self._send(200, "application/json", json.dumps(self._hooks(hooks_write(port, install))))
+                return
+            if path != "/api/pair":
                 self._send(404, "text/plain", "not found")
                 return
             try:
-                length = int(self.headers.get("Content-Length", "0"))
-                req = json.loads(self.rfile.read(length).decode("utf-8"))
+                req = self._body()
                 ip, pin = str(req.get("ip", "")), str(req.get("pin", ""))
             except Exception:
                 self._send(400, "application/json", json.dumps({"ok": False, "error": "richiesta non valida"}))
@@ -651,7 +847,7 @@ class TrayIcon:
         d = self.sampler.snapshot()
         r = lambda v: "--" if v is None else f"{v:.0f}"
         lines = [f"Ritmo Code PC Monitor {VERSION}",
-                 f"cpu {r(d.get('cpu_load'))}% · gpu {r(d.get('gpu_load'))}% · ram {r(d.get('ram_load'))}%",
+                 f"cpu {r(d.get('cpu_load'))}% Â· gpu {r(d.get('gpu_load'))}% Â· ram {r(d.get('ram_load'))}%",
                  self._device_line()]
         return "\n".join(lines)[:127]
 

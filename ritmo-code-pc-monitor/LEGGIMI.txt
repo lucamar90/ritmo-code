@@ -24,6 +24,13 @@ ICONA NELL'AREA DI NOTIFICA (vicino all'orologio)
 - doppio clic: pagina di stato e collegamento
 - clic destro: apri il pannello del dispositivo, esci
 
+AVVISI DI CLAUDE CODE
+Nella pagina http://127.0.0.1:8765/ premi "Attiva gli avvisi": l'app aggiunge tre hook a
+~/.claude/settings.json (il resto del file non cambia, copia in settings.json.ritmo-bak).
+Dalle nuove sessioni di Claude Code il dispositivo mostra quando Claude ha finito o aspetta un
+permesso. Quando mostrarli si sceglie sul dispositivo: Impostazioni -> avvisi claude code.
+"Disattiva" li toglie.
+
 NOTE
 - Windows SmartScreen puo' avvisare che l'app non e' riconosciuta (non e' firmata):
   "Ulteriori informazioni" -> "Esegui comunque".

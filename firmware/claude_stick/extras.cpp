@@ -211,6 +211,14 @@ bool fetchPcStats(const char* host, PcStats& out) {
     d.temp = jnum(s, "temp", p);
     d.life = (lp < 0 || lp > obj || s.substring(lp + 7).startsWith("null")) ? -1 : jnum(s, "life", p);
   }
+  // Claude Code (hook): l'id supera la precisione di un float, si legge come intero
+  int ci = jkey(s, "cc_ev_id");
+  out.ccId = ci < 0 ? 0 : s.substring(ci).toInt();
+  jstrv(s, "cc_ev", out.ccEv, sizeof(out.ccEv));
+  jstrv(s, "cc_ev_proj", out.ccProj, sizeof(out.ccProj));
+  out.ccDur  = (int)jnum(s, "cc_ev_dur", 0, -1);
+  out.ccAge  = (int)jnum(s, "cc_ev_age", 0, 9999);
+  out.ccBusy = (int)jnum(s, "cc_busy");
   out.ok = true;
   return true;
 }
