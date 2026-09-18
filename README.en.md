@@ -9,7 +9,7 @@ No computer running, no app, no cloud.
 
 [Italiano](README.md) · **English**
 
-<img src="https://img.shields.io/badge/firmware-v3.6-D97757?style=for-the-badge" alt="firmware v3.6">
+<img src="https://img.shields.io/badge/firmware-v3.7-D97757?style=for-the-badge" alt="firmware v3.7">
 <img src="https://img.shields.io/badge/ESP32--S3-AXS15231B%20480×320-1B1A18?style=for-the-badge" alt="ESP32-S3 AXS15231B">
 <img src="https://img.shields.io/badge/LVGL-9.2.2-9BC08A?style=for-the-badge" alt="LVGL 9.2.2">
 <img src="https://img.shields.io/badge/accounts-up%20to%204-8E8B82?style=for-the-badge" alt="up to 4 accounts">
@@ -43,6 +43,7 @@ navigation (swipe ← → between pages, no physical button).
 | <img src="assets/screen-window.png" alt="5-hour window"> **5-hour window** — usage in the current window and a dotted projection: tells you whether, at this pace, you run out before the reset. | <img src="assets/screen-rhythm.png" alt="Rhythm"> **Rhythm** — quota burned per hour of day, filtered by **today · 7d · 30d · all** (per-day history stored on the device). |
 | <img src="assets/screen-pc.png" alt="PC"> **PC** — CPU (load, GHz, temperature, watts, busiest core), GPU (VRAM and hot spot), RAM with module temperature, network, disk, graphs that advance with every reading (4 minutes at 1 s), uptime, open Claude Code sessions, power draw and daily cost, drive temperature and remaining life. | <img src="assets/screen-web-pc.png" alt="Web panel, pc page"> **Web panel · pc** — the device's pages in the browser, with every drive listed. |
 | <img src="assets/screen-alert.png" alt="Threshold alert"> **Threshold alerts** — at 25, 50, 70 and 100% a full-screen animation with Clawd reacting to the level. | <img src="assets/screen-reset.png" alt="Reset alert"> **Reset alert** — when a window that went above 80% becomes available again. |
+| <img src="assets/screen-claude.png" alt="Claude is done"> **Claude Code** — with the hooks installed by the PC Monitor, Clawd tells you when Claude has finished (and how long it took) or needs a permission. It stays until you tap it or write to Claude again. | <img src="assets/screen-pomodoro.png" alt="Pomodoro"> **Timer and pomodoro** — tap the clock on the home page: pomodoro 25/5 or a 5 to 30-minute timer. Countdown in the header, alert at the end of each phase, today's pomodoros. |
 | <img src="assets/screen-night.png" alt="Night clock"> **Night clock** — at night, after 30 seconds without touches, a full-screen clock in warm grey with date, 5-hour and weekly usage and upcoming rain. Dim or very dim; alternatively the screen turns off. | <img src="assets/screen-info.png" alt="Info"> **Info** — firmware version, hardware and credits. |
 | <img src="assets/screen-pause.png" alt="Timed pause"> **Pause requests** — the ❚❚ button in the header stops requests; a long press offers 30 min, 1 hour, until 7:00 or no limit. | <img src="assets/screen-settings.png" alt="Settings"> **Settings** — interval, language, timezone, alerts, night mode and night clock, home, pc interval, brightness, Wi-Fi networks and signal, accounts, models, firmware update. |
 
@@ -79,6 +80,7 @@ Anthropic, and the token is never exposed.
 - **Weekly pace**: percentage used minus percentage of the week elapsed. Green when under pace, amber up to +15%, red beyond. Alternates with a **forecast**: "at reset you reach ~70%" or "at this pace ends thu 14:00".
 - **Weekly history**: the peak of every week, stored on the device per account.
 - Threshold **alerts** (25/50/70/100%) and a **reset** alert (can be turned off).
+- **Timer and pomodoro**: tap the clock on the home page. Pomodoro 25/5 with a 15-minute long break after the fourth, or a 5, 10, 15 or 30-minute timer. The countdown sits in the header, Clawd announces the end of each phase full screen (at night too) and today's pomodoros are counted.
 - **Claude Code alerts**: Clawd tells you when Claude has finished a task (with how long it took) or needs a permission, via hooks and the [PC Monitor](#ritmo-code-pc-monitor) app.
 - **Models**: one probe per cycle, rotating. **Model IDs are editable** on the device or in the browser, so a renamed model needs no rebuild.
 - **Night mode** during a time band (22, 23 or 00 → 07): a **full-screen clock**, dim or very dim, or the screen off, and by default **updates paused**. The first tap only wakes the screen, without pressing anything. **Dimming** after 1, 5 or 10 minutes without touches.

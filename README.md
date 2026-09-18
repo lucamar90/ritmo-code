@@ -9,7 +9,7 @@ Senza computer acceso, senza app, senza cloud.
 
 **Italiano** · [English](README.en.md)
 
-<img src="https://img.shields.io/badge/firmware-v3.6-D97757?style=for-the-badge" alt="firmware v3.6">
+<img src="https://img.shields.io/badge/firmware-v3.7-D97757?style=for-the-badge" alt="firmware v3.7">
 <img src="https://img.shields.io/badge/ESP32--S3-AXS15231B%20480×320-1B1A18?style=for-the-badge" alt="ESP32-S3 AXS15231B">
 <img src="https://img.shields.io/badge/LVGL-9.2.2-9BC08A?style=for-the-badge" alt="LVGL 9.2.2">
 <img src="https://img.shields.io/badge/account-fino%20a%204-8E8B82?style=for-the-badge" alt="fino a 4 account">
@@ -40,6 +40,7 @@ L'interfaccia è in stile terminale di Claude Code, in **italiano** o inglese, c
 | <img src="assets/screen-window.png" alt="Finestra 5h"> **Finestra 5h** — uso della finestra corrente e proiezione tratteggiata: ti dice se, a questo ritmo, finisci la quota prima del reset. | <img src="assets/screen-rhythm.png" alt="Ritmo"> **Ritmo** — quota consumata per ora del giorno, con filtro **oggi · 7g · 30g · tutto** (storico per giorno salvato sul dispositivo). |
 | <img src="assets/screen-pc.png" alt="PC"> **PC** — CPU (carico, GHz, temperatura, watt, core più carico), GPU (VRAM e hot spot), RAM con temperatura dei moduli, rete, disco, grafici che avanzano a ogni lettura (4 minuti a 1 s), uptime, sessioni di Claude Code, consumo e costo al giorno, temperatura e vita residua dei dischi. | <img src="assets/screen-web-pc.png" alt="Pannello web, pagina pc"> **Pannello web · pc** — le stesse pagine del dispositivo nel browser, con i dischi uno per uno. |
 | <img src="assets/screen-alert.png" alt="Avviso di soglia"> **Avvisi di soglia** — a 25, 50, 70 e 100% un'animazione a schermo intero con Clawd che reagisce al livello. | <img src="assets/screen-reset.png" alt="Avviso di reset"> **Avviso di reset** — quando una finestra che aveva superato l'80% torna disponibile. |
+| <img src="assets/screen-claude.png" alt="Claude ha finito"> **Claude Code** — con gli hook installati dal PC Monitor, Clawd ti avvisa quando Claude ha finito (e dopo quanto) o aspetta un permesso. Resta finché non lo tocchi o riscrivi a Claude. | <img src="assets/screen-pomodoro.png" alt="Pomodoro"> **Timer e pomodoro** — tocca l'ora nella home: pomodoro 25/5 o timer da 5 a 30 minuti. Conto alla rovescia in testata, avviso a fine fase, pomodori di oggi. |
 | <img src="assets/screen-night.png" alt="Orologio notturno"> **Orologio notturno** — di notte, dopo 30 secondi senza tocchi, l'ora a tutto schermo in grigio caldo con data, uso di 5h e settimana e pioggia in arrivo. Luminosità tenue o molto tenue; in alternativa lo schermo si spegne. | <img src="assets/screen-info.png" alt="Info"> **Info** — versione del firmware, hardware e crediti. |
 | <img src="assets/screen-pause.png" alt="Pausa a tempo"> **Pausa richieste** — il tasto ❚❚ in testata ferma le richieste; tenuto premuto offre 30 min, 1 ora, fino alle 7:00 o senza limite. | <img src="assets/screen-settings.png" alt="Impostazioni"> **Impostazioni** — intervallo, lingua, fuso orario, avvisi, notte e orologio notturno, home, intervallo pc, luminosità, reti Wi-Fi e segnale, account, modelli, aggiornamento firmware. |
 
@@ -76,6 +77,7 @@ nessuna richiesta in più ad Anthropic, e il token non viene mai esposto.
 - **Ritmo settimanale**: percentuale usata meno percentuale di settimana trascorsa. Verde se sei sotto ritmo, ambra fino a +15%, rosso oltre. Alternato alla **previsione**: "al reset arrivi al ~70%" oppure "a questo ritmo finisce gio 14:00".
 - **Storico settimanale**: picco di ogni settimana, salvato sul dispositivo per account.
 - **Avvisi** di soglia (25/50/70/100%) e di **reset** (disattivabile).
+- **Timer e pomodoro**: tocca l'ora nella home. Pomodoro 25/5 con pausa lunga di 15 minuti dopo il quarto, oppure timer da 5, 10, 15 o 30 minuti. Il conto alla rovescia sta nella testata, a fine fase Clawd lo annuncia a schermo intero (anche di notte) e i pomodori di oggi restano contati.
 - **Avvisi di Claude Code**: Clawd ti dice quando Claude ha finito un lavoro (con la durata) o aspetta un permesso, tramite gli hook e l'app [PC Monitor](#ritmo-code-pc-monitor).
 - **Modelli**: una sonda per ciclo a rotazione. Gli **ID sono modificabili** dal dispositivo o dal browser: se Anthropic rinomina un modello non serve ricompilare.
 - **Modalità notte** in una fascia oraria (22, 23 o 00 → 07): **orologio a tutto schermo** con luminosità tenue o molto tenue, oppure schermo spento, e di predefinito **aggiornamenti in pausa**. Il primo tocco riaccende soltanto, senza premere nulla. **Attenuazione** dopo 1, 5 o 10 minuti senza tocchi.

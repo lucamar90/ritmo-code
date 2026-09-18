@@ -16,7 +16,7 @@ const C = {
   BORDER: '#3A3834', TEXT: '#E8E6DF', MUTED: '#8E8B82', FAINT: '#5C5A55', ACCENT: '#D97757',
   OK: '#9BC08A', WARN: '#E0B25A', BAD: '#E06C5A', BLUE: '#7DB9D6', LILAC: '#B7A6E0',
 };
-const CFG = { PIN_LEN: 4, MAX_PIN_ATTEMPTS: 10, LOCKOUT_BASE_SEC: 60, ACCT_MAX: 4, FW: '3.6' };
+const CFG = { PIN_LEN: 4, MAX_PIN_ATTEMPTS: 10, LOCKOUT_BASE_SEC: 60, ACCT_MAX: 4, FW: '3.7' };
 const DEMO_PIN = '1234';
 
 const $ = (id) => document.getElementById(id);
@@ -999,6 +999,8 @@ function buildTileHome(t) {
   UI.hm = {};
   const h = UI.hm;
   h.time = label(t, '', 96, C.TEXT, 7, -6); Object.assign(h.time.style, { fontWeight: '500', letterSpacing: '-3px', lineHeight: '1' });
+  h.time.style.cursor = 'pointer';   // tocca l'ora: timer e pomodoro
+  h.time.addEventListener('click', (e) => { if (realMs() - lastDragAt < 300) return; e.stopPropagation(); tmMenuOpen(); });
   h.date = label(t, '', 14, C.MUTED, 13, 80);
   h.icon = obj(t, 310, 9, 44, 44);
   h.temp = label(t, '', 54, C.TEXT, 362, -1); h.temp.classList.add('pctl');
@@ -1026,7 +1028,10 @@ function homeTick() {
   const GI = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'], GE = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
   const MI = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
   const ME = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
-  setText(h.date, `${P.lang ? GE[p.wd] : GI[p.wd]} ${p.d} ${(P.lang ? ME : MI)[p.mo - 1]} · ${WX.city.toLowerCase()}`);
+  if (TM.mode) {   // timer in corso: al posto della data, fase e ora di fine (il conto alla rovescia e' nella testata)
+    const ph = TM.mode === TM_FOCUS ? `focus ${TM.n + 1}/${POMO.CYCLE}` : TM.mode === TM_BREAK ? TRS('pausa', 'break') : `timer ${Math.floor(TM.lenS / 60)} min`;
+    setText(h.date, TRS(`${ph} · fino alle ${fmtHm(nowEpoch() + tmLeft())}`, `${ph} · until ${fmtHm(nowEpoch() + tmLeft())}`), tmColor());
+  } else setText(h.date, `${P.lang ? GE[p.wd] : GI[p.wd]} ${p.d} ${(P.lang ? ME : MI)[p.mo - 1]} · ${WX.city.toLowerCase()}`, C.MUTED);
   setText(h.desc, Math.floor(realMs() / 6000) % 2 === 0 ? `${wxDesc(WX.code)} · ${WX.tmax}°/${WX.tmin}°`
     : `${TRS('domani', 'tomorrow')} ${WX.tmax2}°/${WX.tmin2}° ${wxDesc(WX.code2)}`);
 }
@@ -1192,6 +1197,7 @@ function setHdrStatus() {
   if (!hdrStatus) return;
   let txt, col;
   if (G.refreshing) { txt = `<span class="brl" style="color:${C.ACCENT}">⠋</span> ${TRS('aggiornamento', 'updating')}`; col = C.ACCENT; }
+  else if (TM.mode) { txt = tmLabel(); col = tmColor(); }
   else if (P.pause && P.pauseUntil) { txt = TRS(`pausa fino ${fmtHm(P.pauseUntil)}`, `paused until ${fmtHm(P.pauseUntil)}`); col = C.WARN; }
   else if (P.pause) { txt = TRS('in pausa', 'paused'); col = C.WARN; }
   else if (nightPaused()) { txt = TRS('notte · in pausa', 'night · paused'); col = C.FAINT; }
@@ -1381,54 +1387,128 @@ function momentTick() {
 }
 
 // ============================================================
-// Claude Code: avviso di fine lavoro / permesso (hook -> PC Monitor -> POST /claude)
+// Avviso a schermo intero con Clawd: Claude Code, timer e pomodoro (come sul dispositivo)
 // ============================================================
-const CC_MIN_S = [0, 0, 60, 300];
-let CC = null;
-function ccClose() { if (CC) { CC.scrim.remove(); CC = null; } }
-function ccEvent(ev, proj, dur) {
-  if (ev === 'busy') { G.ccPend = null; ccClose(); return; }
-  if (!P.ccal) return;
-  if (ev === 'done' && dur >= 0 && dur < CC_MIN_S[P.ccal]) { slog(`[CLAUDE] fine lavoro dopo ${dur} s: sotto la soglia, nessun avviso`); return; }
-  G.ccPend = { ev, proj, dur };
-}
-function ccShow(e, t0) {
-  ccClose();
-  const done = e.ev === 'done', ask = e.ev === 'ask', col = done ? C.OK : C.ACCENT;
+const NT_CLAUDE = 1, NT_TIMER = 2;
+let NT = null;
+function noticeClose() { if (NT) { NT.scrim.remove(); NT = null; } }
+function noticeShow(n, t0) {
+  noticeClose();
   const s = obj(scr, 0, 0, 480, 320, { background: C.BG, zIndex: 49, cursor: 'pointer' });
-  CC = { scrim: s, e, done, col, t0: t0 || realMs() };
-  s.addEventListener('click', (ev) => { ev.stopPropagation(); ccClose(); });
-  const frame = tbox(s, 10, 14, 460, 296, e.proj ? `claude code · ${escapeHtml(e.proj)}` : 'claude code', col);
-  frame._lg.style.color = col; CC.frame = frame;
-  const bx = obj(s, 30, 64, 176, 116); CC.box = bx;
+  NT = { scrim: s, kind: n.kind, col: n.col, hop: n.hop, maxMs: n.maxMs, t0: t0 || realMs() };
+  s.addEventListener('click', (ev) => { ev.stopPropagation(); noticeClose(); });
+  const frame = tbox(s, 10, 14, 460, 296, escapeHtml(n.legend), n.col);
+  frame._lg.style.color = n.col; NT.frame = frame;
+  const bx = obj(s, 30, 64, 176, 116); NT.box = bx;
   const img = clawdImg(bx, 'xl', C.ACCENT); img.style.left = '0px'; img.style.top = '0px';
-  if (!done) CC.ask = label(bx, '?', 22, C.TEXT, 154, 0);
-  label(s, done ? TRS('claude ha finito', 'claude is done') : TRS('claude ti aspetta', 'claude needs you'), 13, C.MUTED, 234, 48);
-  if (done && e.dur >= 0) {
-    const v = e.dur >= 60 ? Math.round(e.dur / 60) : e.dur;
-    const n = label(s, `${v}<small>${e.dur >= 60 ? ' min' : ' s'}</small>`, 54, col, 232, 68); n.classList.add('pctl');
-  } else {
-    label(s, done ? TRS('fatto', 'done') : ask ? TRS('una domanda', 'a question') : TRS('un permesso', 'a permission'), 22, col, 234, 92);
-  }
-  const msg = done ? TRS('tocca a te: rivedi e continua', 'your turn: review and continue')
-    : ask ? TRS('ha una domanda per te', 'has a question for you') : TRS('serve un tuo permesso per continuare', 'needs your permission to continue');
-  const m = label(s, `${GT} ${msg}`, 14, C.TEXT, 234, 140); m.classList.add('wrap'); m.style.width = '222px';
-  label(s, (done ? TRS('alle ', 'at ') : TRS('dalle ', 'since ')) + fmtHm(nowEpoch()), 12, C.MUTED, 234, 220);
+  if (n.ask) NT.ask = label(bx, '?', 22, C.TEXT, 154, 0);
+  label(s, n.top, 13, C.MUTED, 234, 48);
+  if (n.big >= 0) { const b = label(s, `${n.big}<small>${n.unit}</small>`, 54, n.col, 232, 68); b.classList.add('pctl'); }
+  else label(s, n.word, 22, n.col, 234, 92);
+  const m = label(s, `${GT} ${n.msg}`, 14, C.TEXT, 234, 140); m.classList.add('wrap'); m.style.width = '222px';
+  if (n.foot) label(s, n.foot, 12, C.MUTED, 234, 220);
   label(s, TRS('[ tocca per chiudere ]', '[ tap to close ]'), 11, C.FAINT, 292, 284);
-  ccTick();
+  noticeTick();
 }
-// animazione piena nei primi 20 s, poi un richiamo ogni 15 s (come sul dispositivo)
-function ccTick() {
-  if (!CC) return;
-  const t = realMs() - CC.t0;
-  if (t * speed > 30 * 60000) { ccClose(); return; }
+// animazione piena nei primi 20 s, poi un richiamo ogni 15 s
+function noticeTick() {
+  if (!NT) return;
+  const t = realMs() - NT.t0;
+  if (t * speed > NT.maxMs) { noticeClose(); return; }
   const ph = t < 20000 ? t : (t - 20000) % 15000, live = t < 20000 || ph < 1600;
   let y = 104;
   if (t < 450) { const p = t / 450; y = 104 - Math.floor((1 - p) * (1 - p) * 60); }
-  else if (live && CC.done) { const h = (t - 450) % 1600; if (h < 400) y = 104 - Math.trunc(16 * Math.sin(Math.PI * h / 400)); }
-  else if (live) { y = 104 + Math.trunc(3 * Math.sin(t / 400)); if (CC.ask) CC.ask.style.top = Math.trunc(3 - 3 * Math.sin(t / 300)) + 'px'; }
-  CC.box.style.top = y + 'px';
-  if (!CC.done) CC.frame.style.borderColor = live && Math.floor(t / 600) % 2 ? C.BORDER : CC.col;
+  else if (live && NT.hop) { const h = (t - 450) % 1600; if (h < 400) y = 104 - Math.trunc(16 * Math.sin(Math.PI * h / 400)); }
+  else if (live) { y = 104 + Math.trunc(3 * Math.sin(t / 400)); if (NT.ask) NT.ask.style.top = Math.trunc(3 - 3 * Math.sin(t / 300)) + 'px'; }
+  NT.box.style.top = y + 'px';
+  if (!NT.hop) NT.frame.style.borderColor = live && Math.floor(t / 600) % 2 ? C.BORDER : NT.col;
+}
+
+// ---- Claude Code: fine lavoro / permesso (hook -> PC Monitor -> POST /claude) ----
+const CC_MIN_S = [0, 0, 60, 300];
+function ccEvent(ev, proj, dur) {
+  if (ev === 'busy') { if (G.ntPend === NT_CLAUDE) G.ntPend = 0; if (NT && NT.kind === NT_CLAUDE) noticeClose(); return; }
+  if (!P.ccal) return;
+  if (ev === 'done' && dur >= 0 && dur < CC_MIN_S[P.ccal]) { slog(`[CLAUDE] fine lavoro dopo ${dur} s: sotto la soglia, nessun avviso`); return; }
+  G.cc = { ev, proj, dur };
+  if (G.ntPend !== NT_TIMER) { G.ntPend = NT_CLAUDE; G.ntT0 = 0; }
+}
+function ccShow(t0) {
+  const e = G.cc, done = e.ev === 'done', ask = e.ev === 'ask';
+  noticeShow({
+    kind: NT_CLAUDE, col: done ? C.OK : C.ACCENT, maxMs: 30 * 60000, hop: done, ask: !done,
+    legend: e.proj ? `claude code · ${e.proj}` : 'claude code',
+    top: done ? TRS('claude ha finito', 'claude is done') : TRS('claude ti aspetta', 'claude needs you'),
+    big: done && e.dur >= 0 ? (e.dur >= 60 ? Math.round(e.dur / 60) : e.dur) : -1, unit: e.dur >= 60 ? ' min' : ' s',
+    word: done ? TRS('fatto', 'done') : ask ? TRS('una domanda', 'a question') : TRS('un permesso', 'a permission'),
+    msg: done ? TRS('tocca a te: rivedi e continua', 'your turn: review and continue')
+      : ask ? TRS('ha una domanda per te', 'has a question for you') : TRS('serve un tuo permesso per continuare', 'needs your permission to continue'),
+    foot: (done ? TRS('alle ', 'at ') : TRS('dalle ', 'since ')) + fmtHm(nowEpoch()),
+  }, t0);
+}
+
+// ---- Timer e pomodoro (tocca l'ora nella home) ----
+// Pomodoro: 25 min di focus e 5 di pausa, pausa lunga di 15 dopo il quarto, poi si ferma.
+const TM_OFF = 0, TM_TIMER = 1, TM_FOCUS = 2, TM_BREAK = 3, POMO = { FOCUS: 25 * 60, SHORT: 5 * 60, LONG: 15 * 60, CYCLE: 4 };
+const TM = { mode: TM_OFF, endMs: 0, lenS: 0, n: 0, today: 0, day: '', notice: '' };
+const localDay = () => { const p = localParts(nowEpoch()); return `${p.mo}-${p.d}`; };
+const pomoWord = (n) => (n === 1 ? 'pomodoro' : TRS('pomodori', 'pomodoros'));
+const pomoToday = () => (TM.day === localDay() ? TM.today : 0);
+function pomoCount() { if (TM.day !== localDay()) { TM.day = localDay(); TM.today = 0; } TM.today++; }
+const tmLeft = () => Math.max(0, Math.ceil((TM.endMs - millis()) / 1000));
+function tmStart(mode, secs) { TM.mode = mode; TM.lenS = secs; TM.endMs = millis() + secs * 1000; slog(`[TIMER] ${['', 'timer', 'focus', 'pausa'][mode]} ${secs} s`); }
+function tmLabel() {
+  const l = tmLeft(), c = l >= 3600 ? `${Math.floor(l / 3600)}:${pad2(Math.floor(l % 3600 / 60))}:${pad2(l % 60)}` : `${pad2(Math.floor(l / 60))}:${pad2(l % 60)}`;
+  return TM.mode === TM_FOCUS ? `focus ${TM.n + 1}/${POMO.CYCLE} ${c}` : TM.mode === TM_BREAK ? TRS(`pausa ${c}`, `break ${c}`) : `timer ${c}`;
+}
+const tmColor = () => (TM.mode === TM_FOCUS ? C.ACCENT : TM.mode === TM_BREAK ? C.OK : C.TEXT);
+function tmShow(t0) {
+  const today = pomoToday(), foot = TRS(`oggi: ${today} ${pomoWord(today)}`, `today: ${today} ${pomoWord(today)}`);
+  const n = { kind: NT_TIMER, hop: true, maxMs: 2 * 60000, unit: ' min', foot };
+  if (TM.notice === 'timer') Object.assign(n, { col: C.WARN, maxMs: 10 * 60000, legend: 'timer', top: TRS('tempo scaduto', "time's up"),
+    big: TM.lenS >= 60 ? Math.floor(TM.lenS / 60) : TM.lenS, unit: TM.lenS >= 60 ? ' min' : ' s',
+    msg: TRS(`timer di ${Math.floor(TM.lenS / 60)} min finito`, `${Math.floor(TM.lenS / 60)} min timer finished`), foot: TRS('alle ', 'at ') + fmtHm(nowEpoch()) });
+  else if (TM.notice === 'cycle') Object.assign(n, { col: C.OK, maxMs: 10 * 60000, legend: 'pomodoro', top: TRS('ciclo completato', 'cycle complete'),
+    big: POMO.CYCLE, unit: TRS(' pomodori', ' pomodoros'), msg: TRS('ottimo lavoro: fai una pausa vera', 'great work: take a real break') });
+  else if (TM.notice === 'break') Object.assign(n, { col: C.OK, legend: `pomodoro ${TM.n}/${POMO.CYCLE}`, top: TRS('pausa!', 'break time'),
+    big: Math.floor(TM.lenS / 60), msg: TRS('pomodoro fatto: alzati e respira', 'pomodoro done: stand up and breathe') });
+  else Object.assign(n, { col: C.ACCENT, hop: false, legend: `pomodoro ${TM.n + 1}/${POMO.CYCLE}`, top: TRS('si riparte', 'back to focus'),
+    big: Math.floor(TM.lenS / 60), msg: TRS('di concentrazione: una cosa sola', 'of focus: one thing only') });
+  noticeShow(n, t0);
+}
+function tmChanged() { if (hdrStatus) { hdrStatus._t = null; setHdrStatus(); } homeTick(); }
+function tmTick() {
+  if (!TM.mode || millis() < TM.endMs) return;
+  if (TM.mode === TM_TIMER) { TM.notice = 'timer'; TM.mode = TM_OFF; }
+  else if (TM.mode === TM_FOCUS) { TM.n++; pomoCount(); TM.notice = 'break'; tmStart(TM_BREAK, TM.n >= POMO.CYCLE ? POMO.LONG : POMO.SHORT); }
+  else if (TM.n >= POMO.CYCLE) { TM.notice = 'cycle'; TM.mode = TM_OFF; TM.n = 0; }
+  else { TM.notice = 'focus'; tmStart(TM_FOCUS, POMO.FOCUS); }
+  G.ntPend = NT_TIMER; G.ntT0 = 0;
+  tmChanged();
+}
+let TMENU = null;
+function tmMenuClose() { if (TMENU) { TMENU.remove(); TMENU = null; } }
+function tmMenuOpen() {
+  tmMenuClose();
+  const s = obj(scr, 0, 0, 480, 320, { background: 'rgba(20,20,19,.8)', zIndex: 60 });
+  s.addEventListener('click', (e) => { e.stopPropagation(); tmMenuClose(); });
+  TMENU = s;
+  const today = pomoToday();
+  const b = tbox(s, 90, 60, 300, 200, today ? TRS(`timer · oggi ${today} ${pomoWord(today)}`, `timer · today ${today} ${pomoWord(today)}`) : TRS('timer e pomodoro', 'timer and pomodoro'), C.ACCENT);
+  b.style.background = C.BG; b._lg.style.color = C.ACCENT;
+  b.addEventListener('click', (e) => e.stopPropagation());
+  const btn = (txt, x, y, w, fn, color) => { const bt = tbtn(b, txt, w, 42, () => { tmMenuClose(); if (fn) { fn(); tmChanged(); } }, { color, size: 14 }); bt.style.left = x + 'px'; bt.style.top = y + 'px'; };
+  if (!TM.mode) {
+    [['pomodoro 25/5', 0], ['5 min', 5], ['10 min', 10], ['15 min', 15], ['30 min', 30]].forEach(([t, m], i) =>
+      btn(t, 20 + (i % 2) * 134, 22 + Math.floor(i / 2) * 56, 124, () => { if (m) tmStart(TM_TIMER, m * 60); else { TM.n = 0; tmStart(TM_FOCUS, POMO.FOCUS); } }, i ? C.TEXT : C.ACCENT));
+    btn(TRS('annulla', 'cancel'), 154, 134, 124, null, C.MUTED);
+  } else {
+    label(b, tmLabel(), 22, tmColor(), 20, 26);
+    btn(TRS('ferma', 'stop'), 20, 78, 124, () => { TM.mode = TM_OFF; TM.n = 0; slog('[TIMER] fermato'); }, C.BAD);
+    if (TM.mode === TM_TIMER) btn('+5 min', 154, 78, 124, () => { TM.endMs += 5 * 60000; TM.lenS += 300; }, C.TEXT);
+    else btn(TRS('salta fase', 'skip phase'), 154, 78, 124, () => { TM.endMs = millis(); }, C.TEXT);
+    btn(TRS('annulla', 'cancel'), 20, 134, 258, null, C.MUTED);
+  }
 }
 
 // ============================================================
@@ -1677,8 +1757,9 @@ for (const ev of ['pointerdown', 'click']) {
 // ============================================================
 function clearScreen() {
   momentClose(); PMENU = null; NC = null;
-  // l'avviso di Claude Code sopravvive ai rebuild del dashboard (stesso inizio)
-  if (CC) { if (pending === ST.MAIN) { G.ccPend = CC.e; G.ccT0 = CC.t0; } ccClose(); }
+  // l'avviso a schermo intero sopravvive ai rebuild del dashboard (stesso inizio)
+  if (NT) { if (pending === ST.MAIN) { G.ntPend = NT.kind; G.ntT0 = NT.t0; } noticeClose(); }
+  tmMenuClose();
   scr.innerHTML = '';
   UI = {}; hdrStatus = null; pinDots = pinMsg = tokMsg = null; activeTA = null;
 }
@@ -1755,11 +1836,12 @@ function loop() {
     if (state === ST.LOADING) doRefresh();
   }
   screenTick();
+  tmTick();
   if (state === ST.MAIN && !G.refreshing && (G.wantRefresh || (!pollingPaused() && millis() - G.lastPollMs > P.poll * 1000))) {
     G.wantRefresh = false; bgRefresh();
   }
   if (state === ST.MAIN) {
-    if (r - lastTick > 1000 / Math.min(speed, 4)) { lastTick = r; dashTick(); homeTick(); }
+    if (r - lastTick > 1000 / Math.min(speed, 4)) { lastTick = r; dashTick(); homeTick(); if (TM.mode) setHdrStatus(); }
     if (UI.refBar) {
       let v = 1;
       if (!G.refreshing && pollingPaused()) v = 0;
@@ -1780,21 +1862,23 @@ function loop() {
       blinkAt = r; blinkClosed = !blinkClosed;
       masc.forEach((m) => { if (m.mood === 1) m.lid.forEach((l) => { l.style.display = blinkClosed ? '' : 'none'; }); });
     }
-    if (P.slide > 0 && UI.tv && !G.refreshing && !MO && !CC && G.screenMode < 2 && r - G.lastTouch > 10000 && r - G.lastSlide > P.slide * 1000) {
+    if (P.slide > 0 && UI.tv && !G.refreshing && !MO && !NT && !TMENU && G.screenMode < 2 && r - G.lastTouch > 10000 && r - G.lastSlide > P.slide * 1000) {
       G.lastSlide = r; setTile((G.curTile + 1) % NTILES, true);
     }
     if (P.pause && P.pauseUntil && nowEpoch() >= P.pauseUntil) pauseSet(false, 0);
     // torna alla home dopo N minuti senza tocchi (una volta per periodo di inattivita')
-    if (P.clock && UI.tv && G.curTile !== 0 && !MO && !CC && !PMENU && G.screenMode < 2 && G.homedFor !== G.lastTouch &&
+    if (P.clock && UI.tv && G.curTile !== 0 && !MO && !NT && !TMENU && !PMENU && G.screenMode < 2 && G.homedFor !== G.lastTouch &&
         (r - G.lastTouch) * speed > CLOCK_MIN[P.clock] * 60000) { G.homedFor = G.lastTouch; setTile(0, true); }
     if (G.pendWin >= 0 && !MO && !G.refreshing && G.screenMode < 2) { showMoment(G.pendWin, G.pendThr); G.pendWin = -1; }
     if (MO) momentTick();
-    if (G.ccPend && G.screenMode >= 2) { G.ccPend = null; G.ccT0 = 0; }
-    if (G.ccPend && !MO && !G.refreshing) {
-      if (!G.ccT0) { touched(); if (G.screenMode) { G.screenMode = 0; applyBrightness(); } }
-      ccShow(G.ccPend, G.ccT0); G.ccPend = null; G.ccT0 = 0;
+    // di notte gli avvisi di Claude Code non compaiono; quelli del timer si' (e riaccendono lo schermo)
+    if (G.ntPend === NT_CLAUDE && G.screenMode >= 2 && !G.ntT0) G.ntPend = 0;
+    if (G.ntPend && !MO && !G.refreshing) {
+      const k = G.ntPend, t0 = G.ntT0; G.ntPend = 0; G.ntT0 = 0;
+      if (!t0) { touched(); if (G.screenMode) { G.screenMode = 0; applyBrightness(); } }
+      if (k === NT_CLAUDE) ccShow(t0); else tmShow(t0);
     }
-    if (CC) ccTick();
+    if (NT) noticeTick();
   }
   if ((state === ST.PIN || state === ST.SETUP_PIN) && pinMsg && G.lockoutUntil > 0) {
     if (millis() < G.lockoutUntil) setText(pinMsg, TRS(`Attendi ${Math.ceil((G.lockoutUntil - millis()) / 1000)}s`, `Wait ${Math.ceil((G.lockoutUntil - millis()) / 1000)}s`));
@@ -1898,7 +1982,7 @@ function initPanel() {
 }
 
 // accesso per tools/capture_screens.js (immagini del README)
-window.__sim = { API, G, ST, P, boot, requestState, setTile, refreshUiValues, dashTick, showMoment, momentClose, ccEvent, ccClose, pauseMenuOpen, pauseMenuClose, nightClockShow, nightClockClose };
+window.__sim = { API, G, ST, P, boot, requestState, setTile, refreshUiValues, dashTick, showMoment, momentClose, ccEvent, noticeClose, tmMenuOpen, tmStart, TM, TM_TIMER, TM_FOCUS, TM_BREAK, pauseMenuOpen, pauseMenuClose, nightClockShow, nightClockClose };
 initPanel();
 applyBrightness();
 boot(true);

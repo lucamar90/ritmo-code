@@ -34,6 +34,7 @@
 #include "extras.h"         // meteo (Open-Meteo) e statistiche del PC per la home
 #include "status_page.h"   // pagina di stato servita su /
 #include "logo_assets.h"   // Clawd + logotipo ufficiali (generato da tools/gen_logo_assets.py)
+struct NoticeText;                 // avviso a schermo intero (prototipi generati da Arduino)
 
 // ---- Tema "Terminale": font JetBrains Mono (tools/gen_fonts.sh) ----
 // 12/14 Regular, 22 Medium, 54 ExtraBold (solo cifre e %). I simboli che JetBrains
@@ -416,6 +417,20 @@ static void show_moment(int win, int thr);
 static void moment_tick();
 static void moment_close();
 static void cc_event(long id, const char *ev, const char *proj, int dur, int age);
+static void tm_menu_open(lv_event_t *e);
+static void tm_label(char *out, size_t sz);
+static uint32_t tm_color();
+enum { TM_OFF = 0, TM_TIMER, TM_FOCUS, TM_BREAK };
+static int  g_tmMode = TM_OFF;                // timer/pomodoro in corso
+static int  g_pomoToday = 0;                  // pomodori completati oggi (NVS "pomn", giorno in "pomday")
+static long g_pomoDay = 0;
+static int  pomo_today();
+static uint32_t g_tmEndMs = 0, g_tmLenS = 0;
+static int  g_pomoN = 0;                      // pomodori completati nel ciclo in corso
+#define POMO_FOCUS_S (25 * 60)                // pomodoro: 25 min di focus, 5 di pausa, 15 dopo il quarto
+#define POMO_SHORT_S (5 * 60)
+#define POMO_LONG_S  (15 * 60)
+#define POMO_CYCLE   4
 
 // ============================================================
 // Pipeline di display/touch (validata nel bring-up)
@@ -806,6 +821,8 @@ static void load_persisted() {
   g_heatMode = g_prefs.getInt("heatm", 3);
   g_perfOn = g_prefs.getBool("perf", false);
   g_resetAlert = g_prefs.getBool("rstal", true);
+  g_pomoToday = g_prefs.getInt("pomn", 0);
+  g_pomoDay = g_prefs.getLong("pomday", 0);
   g_ccAlert = g_prefs.getInt("ccal", 2);
   if (g_ccAlert < 0 || g_ccAlert > 3) g_ccAlert = 2;
   g_nightIdx = g_prefs.getInt("night", 0);
@@ -2653,6 +2670,9 @@ static void wx_icon(lv_obj_t *b, int code, bool day) {
 static void build_tile_home(lv_obj_t *t) {
   // griglia aurea: colonna sinistra fino a x 297 (480 / phi), meteo da 310
   g_ui.hmTime = tlabel(t, F96, C_TEXT, 7, 7);
+  lv_obj_add_flag(g_ui.hmTime, LV_OBJ_FLAG_CLICKABLE);           // tocca l'ora: timer e pomodoro
+  lv_obj_set_ext_click_area(g_ui.hmTime, 8);
+  lv_obj_add_event_cb(g_ui.hmTime, tm_menu_open, LV_EVENT_SHORT_CLICKED, NULL);
   g_ui.hmDate = tlabel(t, F14, C_MUTED, 13, 80);
   lv_obj_set_width(g_ui.hmDate, 284);
   lv_label_set_long_mode(g_ui.hmDate, LV_LABEL_LONG_DOT);
@@ -2714,7 +2734,17 @@ static void home_tick() {
   for (char *q = city; *q; q++) if (*q >= 'A' && *q <= 'Z') *q += 32;
   if (g_lang) snprintf(s, sizeof(s), "%s %d %s " U_MIDDOT " %s", GEN[tv.tm_wday], tv.tm_mday, MEN[tv.tm_mon], city);
   else        snprintf(s, sizeof(s), "%s %d %s " U_MIDDOT " %s", GIT[tv.tm_wday], tv.tm_mday, MIT[tv.tm_mon], city);
+  if (g_tmMode) {                                  // timer in corso: al posto della data, fase e ora di fine
+    char hm[12], ph[24];                            // (il conto alla rovescia e' nella testata)
+    int32_t left = (int32_t)(g_tmEndMs - millis());
+    fmt_hm((uint32_t)now + (left > 0 ? (left + 999) / 1000 : 0), hm, sizeof(hm));
+    if (g_tmMode == TM_FOCUS)      snprintf(ph, sizeof(ph), "focus %d/%d", g_pomoN + 1, POMO_CYCLE);
+    else if (g_tmMode == TM_BREAK) strcpy(ph, TRS("pausa", "break"));
+    else                           snprintf(ph, sizeof(ph), "timer %u min", (unsigned)(g_tmLenS / 60));
+    snprintf(s, sizeof(s), TRS("%s " U_MIDDOT " fino alle %s", "%s " U_MIDDOT " until %s"), ph, hm);
+  }
   label_set(g_ui.hmDate, s);
+  label_color(g_ui.hmDate, g_tmMode ? tm_color() : C_MUTED);
   // descrizione meteo: ogni 6 s alterna oggi e domani
   if (g_wx.ok) {
     if ((millis() / 6000) % 2 == 0)
@@ -3394,126 +3424,304 @@ static void moment_tick() {
 }
 
 // ============================================================
-// Claude Code — avviso quando Claude ha finito o aspetta un permesso.
-// Hook di Claude Code -> Ritmo Code PC Monitor -> POST /claude (subito) o data.json (al giro dopo).
-// Resta a schermo finche' non lo tocchi o scrivi di nuovo a Claude (evento "busy"), al massimo 30 min.
+// Avviso a schermo intero con Clawd: Claude Code, timer e pomodoro.
+// Resta finche' non lo tocchi (o scade), sopravvive ai rebuild del dashboard.
 // ============================================================
+enum { NT_NONE = 0, NT_CLAUDE, NT_TIMER };
+struct NoticeUI { lv_obj_t *scrim, *box, *frame, *ask; uint32_t t0, col, maxMs; int kind; bool hop, idle; };
+static NoticeUI g_nt = {};
+static int g_ntPend = NT_NONE;                 // avviso da mostrare appena si puo'
+static uint32_t g_ntT0 = 0;                    // != 0: da rimettere dopo un rebuild (stesso inizio)
+struct NoticeText {
+  int kind; uint32_t col, maxMs;
+  bool hop, ask;                               // Clawd salta contento / punto di domanda e cornice che pulsa
+  char legend[48], top[40], word[24], unit[16], msg[64], foot[40];
+  int big;                                     // numero grande (F54, solo cifre); < 0 = mostra `word`
+};
+
+static void notice_close() {
+  if (!g_nt.scrim) return;
+  lv_obj_delete(g_nt.scrim);
+  memset(&g_nt, 0, sizeof(g_nt));
+}
+static void notice_close_cb(lv_event_t *e) { (void)e; notice_close(); }
+
+static void notice_show(const NoticeText &n) {
+  notice_close();
+  g_nt.kind = n.kind; g_nt.col = n.col; g_nt.hop = n.hop; g_nt.maxMs = n.maxMs;
+  g_nt.t0 = g_ntT0 ? g_ntT0 : millis();
+  g_ntT0 = 0;
+
+  lv_obj_t *s = plain_obj(lv_layer_top());
+  g_nt.scrim = s;
+  lv_obj_set_pos(s, 0, 0); lv_obj_set_size(s, 480, 320);
+  lv_obj_set_style_bg_color(s, lv_color_hex(C_BG), 0);
+  lv_obj_set_style_bg_opa(s, LV_OPA_COVER, 0);
+  lv_obj_add_flag(s, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(s, notice_close_cb, LV_EVENT_CLICKED, NULL);
+
+  lv_obj_t *lgl = nullptr;
+  g_nt.frame = tbox(s, 10, 14, 460, 296, n.legend, n.col, &lgl);
+  if (lgl) lv_obj_set_style_text_color(lgl, lv_color_hex(n.col), 0);
+
+  lv_obj_t *bx = plain_obj(s);
+  g_nt.box = bx;
+  lv_obj_set_pos(bx, 30, 64);
+  lv_obj_set_size(bx, 176, 116);
+  lv_obj_t *img = lv_image_create(bx);
+  lv_image_set_src(img, &img_clawd_xl);
+  lv_obj_set_pos(img, 0, 0);
+  if (n.ask) g_nt.ask = tstatic(bx, "?", F22, C_TEXT, 154, 0);
+
+  tstatic(s, n.top, F14, C_MUTED, 234, 46);
+  if (n.big >= 0) {
+    lv_obj_t *r = trow(s, 232, 72);
+    char b[12]; snprintf(b, sizeof(b), "%d", n.big);
+    mklabel(r, b, F54, n.col);
+    mklabel(r, n.unit, F22, C_MUTED);
+  } else {
+    tstatic(s, n.word, F22, n.col, 234, 92);
+  }
+  tstatic(s, ">", F14, C_ACCENT, 234, 138);
+  lv_obj_t *m = tstatic(s, n.msg, F14, C_TEXT, 252, 138);
+  lv_obj_set_width(m, 204);
+  lv_label_set_long_mode(m, LV_LABEL_LONG_WRAP);
+  if (n.foot[0]) tstatic(s, n.foot, F12, C_MUTED, 234, 222);
+  tstatic(s, TRS("[ tocca per chiudere ]", "[ tap to close ]"), F12, C_FAINT, 290, 280);
+}
+
+// Animazione piena nei primi 20 s, poi un richiamo ogni 15 s: niente ridisegni continui per mezz'ora.
+static void notice_tick() {
+  if (!g_nt.scrim) return;
+  uint32_t t = millis() - g_nt.t0;
+  if (t > g_nt.maxMs) { notice_close(); return; }
+  uint32_t ph = t < 20000 ? t : (t - 20000) % 15000;
+  bool live = t < 20000 || ph < 1600;
+  if (!live && g_nt.idle) return;              // fermo: l'ultimo frame e' gia' a riposo
+  g_nt.idle = !live;
+  int y = 104;
+  if (t < 450) {
+    float p = t / 450.0f;
+    y = 104 - (int)((1.0f - p) * (1.0f - p) * 60.0f);
+  } else if (live && g_nt.hop) {               // salta contento
+    uint32_t h = (t - 450) % 1600;
+    if (h < 400) y = 104 - (int)(16.0f * sinf(3.14159f * h / 400.0f));
+  } else if (live) {                           // ondeggia, il punto di domanda va su e giu'
+    y = 104 + (int)(3.0f * sinf(t / 400.0f));
+    if (g_nt.ask) lv_obj_set_y(g_nt.ask, (int)(3.0f - 3.0f * sinf(t / 300.0f)));
+  }
+  lv_obj_set_pos(g_nt.box, 30, y);
+  if (!g_nt.hop && g_nt.frame)
+    lv_obj_set_style_border_color(g_nt.frame, lv_color_hex(live && (t / 600) % 2 ? C_BORDER : g_nt.col), 0);
+}
+
+// ---- Claude Code: fine lavoro / permesso ----
+// Hook di Claude Code -> Ritmo Code PC Monitor -> POST /claude (subito) o data.json (al giro dopo).
+// Resta finche' non lo tocchi o scrivi di nuovo a Claude (evento "busy"), al massimo 30 min.
 static const uint16_t CC_MIN_S[4] = {0, 0, 60, 300};   // durata minima del lavoro per l'avviso di fine
-#define CC_MAX_MS (30UL * 60UL * 1000UL)
-struct CcUI { lv_obj_t *scrim, *box, *frame, *ask; uint32_t t0, col; bool done, idle; };
-static CcUI g_cc = {};
 static long g_ccSeen = 0;                      // id dell'ultimo evento gia' visto (crescono sempre)
-static bool g_ccPend = false;
 static char g_ccEv[8], g_ccProj[28];
 static int  g_ccDur = -1;
-static uint32_t g_ccT0 = 0;                    // != 0: avviso da rimettere dopo un rebuild (stesso inizio)
-
-static void cc_close() {
-  if (!g_cc.scrim) return;
-  lv_obj_delete(g_cc.scrim);
-  memset(&g_cc, 0, sizeof(g_cc));
-}
-static void cc_close_cb(lv_event_t *e) { (void)e; cc_close(); }
 
 static void cc_event(long id, const char *ev, const char *proj, int dur, int age) {
   if (id <= g_ccSeen) return;                  // gia' visto (arriva sia dal POST sia da data.json)
   g_ccSeen = id;
   if (age > 120) return;                       // vecchio: letto all'avvio o dopo che il pc non rispondeva
   Serial.printf("[CLAUDE] %s %s (%d s)\n", ev, proj, dur);
-  if (!strcmp(ev, "busy")) { g_ccPend = false; cc_close(); return; }   // sei tornato a scrivere a Claude
+  if (!strcmp(ev, "busy")) {                   // sei tornato a scrivere a Claude
+    if (g_ntPend == NT_CLAUDE) g_ntPend = NT_NONE;
+    if (g_nt.kind == NT_CLAUDE) notice_close();
+    return;
+  }
   if (!g_ccAlert) return;
   if (!strcmp(ev, "done") && dur >= 0 && dur < CC_MIN_S[g_ccAlert]) return;
   strlcpy(g_ccEv, ev, sizeof(g_ccEv));
   strlcpy(g_ccProj, proj, sizeof(g_ccProj));
   g_ccDur = dur;
-  g_ccPend = true;
+  if (g_ntPend != NT_TIMER) { g_ntPend = NT_CLAUDE; g_ntT0 = 0; }
 }
 
 static void cc_show() {
-  cc_close();
+  NoticeText n = {};
   bool done = !strcmp(g_ccEv, "done"), ask = !strcmp(g_ccEv, "ask");
-  g_cc.done = done;
-  g_cc.col = done ? C_OK : C_ACCENT;
-  g_cc.t0 = g_ccT0 ? g_ccT0 : millis();
-  g_ccT0 = 0;
-
-  lv_obj_t *s = plain_obj(lv_layer_top());
-  g_cc.scrim = s;
-  lv_obj_set_pos(s, 0, 0); lv_obj_set_size(s, 480, 320);
-  lv_obj_set_style_bg_color(s, lv_color_hex(C_BG), 0);
-  lv_obj_set_style_bg_opa(s, LV_OPA_COVER, 0);
-  lv_obj_add_flag(s, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_add_event_cb(s, cc_close_cb, LV_EVENT_CLICKED, NULL);
-
-  char lg[48];
-  if (g_ccProj[0]) snprintf(lg, sizeof(lg), "claude code " U_MIDDOT " %s", g_ccProj);
-  else             strcpy(lg, "claude code");
-  lv_obj_t *lgl = nullptr;
-  g_cc.frame = tbox(s, 10, 14, 460, 296, lg, g_cc.col, &lgl);
-  if (lgl) lv_obj_set_style_text_color(lgl, lv_color_hex(g_cc.col), 0);
-
-  lv_obj_t *bx = plain_obj(s);
-  g_cc.box = bx;
-  lv_obj_set_pos(bx, 30, 64);
-  lv_obj_set_size(bx, 176, 116);
-  lv_obj_t *img = lv_image_create(bx);
-  lv_image_set_src(img, &img_clawd_xl);
-  lv_obj_set_pos(img, 0, 0);
-  if (!done) g_cc.ask = tstatic(bx, "?", F22, C_TEXT, 154, 0);    // punto di domanda sopra Clawd
-
-  tstatic(s, done ? TRS("claude ha finito", "claude is done") : TRS("claude ti aspetta", "claude needs you"),
-          F14, C_MUTED, 234, 46);
-  char b[48];
+  n.kind = NT_CLAUDE; n.col = done ? C_OK : C_ACCENT; n.maxMs = 30UL * 60UL * 1000UL;
+  n.hop = done; n.ask = !done;
+  if (g_ccProj[0]) snprintf(n.legend, sizeof(n.legend), "claude code " U_MIDDOT " %s", g_ccProj);
+  else             strcpy(n.legend, "claude code");
+  strlcpy(n.top, done ? TRS("claude ha finito", "claude is done") : TRS("claude ti aspetta", "claude needs you"), sizeof(n.top));
+  n.big = -1;
   if (done && g_ccDur >= 0) {                  // durata del lavoro in grande
-    lv_obj_t *r = trow(s, 232, 72);
-    int v = g_ccDur >= 60 ? (g_ccDur + 30) / 60 : g_ccDur;
-    snprintf(b, sizeof(b), "%d", v);
-    mklabel(r, b, F54, g_cc.col);
-    mklabel(r, g_ccDur >= 60 ? " min" : " s", F22, C_MUTED);
-  } else {
-    tstatic(s, done ? TRS("fatto", "done") : ask ? TRS("una domanda", "a question") : TRS("un permesso", "a permission"),
-            F22, g_cc.col, 234, 92);
+    n.big = g_ccDur >= 60 ? (g_ccDur + 30) / 60 : g_ccDur;
+    strcpy(n.unit, g_ccDur >= 60 ? " min" : " s");
   }
-  const char *msg = done ? TRS("tocca a te: rivedi e continua", "your turn: review and continue")
-                  : ask  ? TRS("ha una domanda per te", "has a question for you")
-                         : TRS("serve un tuo permesso per continuare", "needs your permission to continue");
-  tstatic(s, ">", F14, C_ACCENT, 234, 138);
-  lv_obj_t *m = tstatic(s, msg, F14, C_TEXT, 252, 138);
-  lv_obj_set_width(m, 204);
-  lv_label_set_long_mode(m, LV_LABEL_LONG_WRAP);
-  char hm[12]; hm[0] = 0;
+  strlcpy(n.word, done ? TRS("fatto", "done") : ask ? TRS("una domanda", "a question") : TRS("un permesso", "a permission"), sizeof(n.word));
+  strlcpy(n.msg, done ? TRS("tocca a te: rivedi e continua", "your turn: review and continue")
+               : ask  ? TRS("ha una domanda per te", "has a question for you")
+                      : TRS("serve un tuo permesso per continuare", "needs your permission to continue"), sizeof(n.msg));
   time_t now = time(nullptr);
   if (now > 1000000000L) {
-    fmt_hm((uint32_t)now, hm, sizeof(hm));
-    snprintf(b, sizeof(b), done ? TRS("alle %s", "at %s") : TRS("dalle %s", "since %s"), hm);
-    tstatic(s, b, F12, C_MUTED, 234, 222);
+    char hm[12]; fmt_hm((uint32_t)now, hm, sizeof(hm));
+    snprintf(n.foot, sizeof(n.foot), done ? TRS("alle %s", "at %s") : TRS("dalle %s", "since %s"), hm);
   }
-  tstatic(s, TRS("[ tocca per chiudere ]", "[ tap to close ]"), F12, C_FAINT, 290, 280);
+  notice_show(n);
 }
 
-// Animazione piena nei primi 20 s, poi un richiamo ogni 15 s: niente ridisegni continui per mezz'ora.
-static void cc_tick() {
-  if (!g_cc.scrim) return;
-  uint32_t t = millis() - g_cc.t0;
-  if (t > CC_MAX_MS) { cc_close(); return; }
-  uint32_t ph = t < 20000 ? t : (t - 20000) % 15000;
-  bool live = t < 20000 || ph < 1600;
-  if (!live && g_cc.idle) return;              // fermo: l'ultimo frame e' gia' a riposo
-  g_cc.idle = !live;
-  int y = 104;
-  if (t < 450) {
-    float p = t / 450.0f;
-    y = 104 - (int)((1.0f - p) * (1.0f - p) * 60.0f);
-  } else if (live && g_cc.done) {              // salta contento
-    uint32_t h = (t - 450) % 1600;
-    if (h < 400) y = 104 - (int)(16.0f * sinf(3.14159f * h / 400.0f));
-  } else if (live) {                           // ondeggia, il punto di domanda va su e giu'
-    y = 104 + (int)(3.0f * sinf(t / 400.0f));
-    if (g_cc.ask) lv_obj_set_y(g_cc.ask, (int)(3.0f - 3.0f * sinf(t / 300.0f)));
+// ---- Timer e pomodoro (tocca l'ora nella home) ----
+// Pomodoro: 25 min di focus e 5 di pausa, pausa lunga di 15 dopo il quarto, poi si ferma.
+enum { TN_TIMER = 1, TN_BREAK, TN_FOCUS, TN_CYCLE };
+static int g_tmNotice = 0;                     // quale avviso di fine fase mostrare
+
+static long local_day() {
+  time_t now = time(nullptr);
+  if (now < 1000000000L) return 0;
+  struct tm tv; localtime_r(&now, &tv);
+  return (tv.tm_year + 1900) * 1000L + tv.tm_yday;
+}
+static int pomo_today() {
+  long d = local_day();
+  return !d || d == g_pomoDay ? g_pomoToday : 0;
+}
+static void pomo_count() {
+  long d = local_day();
+  if (d && d != g_pomoDay) { g_pomoDay = d; g_pomoToday = 0; g_prefs.putLong("pomday", d); }
+  g_pomoToday++;
+  g_prefs.putInt("pomn", g_pomoToday);
+}
+static const char *pomo_word(int n) {
+  return n == 1 ? "pomodoro" : TRS("pomodori", "pomodoros");
+}
+static uint32_t tm_left_s() {
+  int32_t l = (int32_t)(g_tmEndMs - millis());
+  return l > 0 ? (uint32_t)(l + 999) / 1000 : 0;
+}
+static void tm_start(int mode, uint32_t secs) {
+  g_tmMode = mode; g_tmLenS = secs;
+  g_tmEndMs = millis() + secs * 1000UL;
+  Serial.printf("[TIMER] %s %u s\n", mode == TM_TIMER ? "timer" : mode == TM_FOCUS ? "focus" : "pausa", (unsigned)secs);
+}
+// testo breve della fase: "focus 2/4 18:42", "pausa 04:10", "timer 07:30"
+static void tm_label(char *out, size_t sz) {
+  uint32_t l = tm_left_s();
+  char c[12];
+  if (l >= 3600) snprintf(c, sizeof(c), "%u:%02u:%02u", (unsigned)(l / 3600), (unsigned)(l % 3600 / 60), (unsigned)(l % 60));
+  else           snprintf(c, sizeof(c), "%02u:%02u", (unsigned)(l / 60), (unsigned)(l % 60));
+  if (g_tmMode == TM_FOCUS)      snprintf(out, sz, "focus %d/%d %s", g_pomoN + 1, POMO_CYCLE, c);
+  else if (g_tmMode == TM_BREAK) snprintf(out, sz, TRS("pausa %s", "break %s"), c);
+  else                           snprintf(out, sz, "timer %s", c);
+}
+static uint32_t tm_color() {
+  return g_tmMode == TM_FOCUS ? C_ACCENT : g_tmMode == TM_BREAK ? C_OK : C_TEXT;
+}
+
+static void tm_show() {
+  NoticeText n = {};
+  n.kind = NT_TIMER; n.hop = true; n.maxMs = 2UL * 60UL * 1000UL;
+  int today = pomo_today();
+  if (g_tmNotice == TN_TIMER) {
+    n.col = C_WARN; n.maxMs = 10UL * 60UL * 1000UL;
+    strcpy(n.legend, "timer");
+    strlcpy(n.top, TRS("tempo scaduto", "time's up"), sizeof(n.top));
+    n.big = g_tmLenS >= 60 ? g_tmLenS / 60 : g_tmLenS;
+    strcpy(n.unit, g_tmLenS >= 60 ? " min" : " s");
+    if (g_tmLenS >= 60) snprintf(n.msg, sizeof(n.msg), TRS("timer di %u min finito", "%u min timer finished"), (unsigned)(g_tmLenS / 60));
+    else                strlcpy(n.msg, TRS("timer finito", "timer finished"), sizeof(n.msg));
+    time_t now = time(nullptr);
+    if (now > 1000000000L) { char hm[12]; fmt_hm((uint32_t)now, hm, sizeof(hm)); snprintf(n.foot, sizeof(n.foot), TRS("alle %s", "at %s"), hm); }
+  } else if (g_tmNotice == TN_CYCLE) {
+    n.col = C_OK; n.maxMs = 10UL * 60UL * 1000UL;
+    strcpy(n.legend, "pomodoro");
+    strlcpy(n.top, TRS("ciclo completato", "cycle complete"), sizeof(n.top));
+    n.big = POMO_CYCLE; strlcpy(n.unit, TRS(" pomodori", " pomodoros"), sizeof(n.unit));
+    strlcpy(n.msg, TRS("ottimo lavoro: fai una pausa vera", "great work: take a real break"), sizeof(n.msg));
+    snprintf(n.foot, sizeof(n.foot), TRS("oggi: %d %s", "today: %d %s"), today, pomo_word(today));
+  } else if (g_tmNotice == TN_BREAK) {
+    n.col = C_OK;
+    snprintf(n.legend, sizeof(n.legend), "pomodoro %d/%d", g_pomoN, POMO_CYCLE);
+    strlcpy(n.top, TRS("pausa!", "break time"), sizeof(n.top));
+    n.big = g_tmLenS / 60; strcpy(n.unit, " min");
+    strlcpy(n.msg, TRS("pomodoro fatto: alzati e respira", "pomodoro done: stand up and breathe"), sizeof(n.msg));
+    snprintf(n.foot, sizeof(n.foot), TRS("oggi: %d %s", "today: %d %s"), today, pomo_word(today));
+  } else {                                     // TN_FOCUS: fine pausa, riparte il focus
+    n.col = C_ACCENT; n.hop = false;
+    snprintf(n.legend, sizeof(n.legend), "pomodoro %d/%d", g_pomoN + 1, POMO_CYCLE);
+    strlcpy(n.top, TRS("si riparte", "back to focus"), sizeof(n.top));
+    n.big = g_tmLenS / 60; strcpy(n.unit, " min");
+    strlcpy(n.msg, TRS("di concentrazione: una cosa sola", "of focus: one thing only"), sizeof(n.msg));
+    snprintf(n.foot, sizeof(n.foot), TRS("oggi: %d %s", "today: %d %s"), today, pomo_word(today));
   }
-  lv_obj_set_pos(g_cc.box, 30, y);
-  if (!g_cc.done && g_cc.frame)
-    lv_obj_set_style_border_color(g_cc.frame, lv_color_hex(live && (t / 600) % 2 ? C_BORDER : g_cc.col), 0);
+  notice_show(n);
+}
+
+static void tm_changed() { set_hdr_status(); home_tick(); }
+
+// fine della fase (ogni giro del loop, in qualsiasi schermata): avviso e fase successiva
+static void tm_tick() {
+  if (!g_tmMode || (int32_t)(millis() - g_tmEndMs) < 0) return;
+  if (g_tmMode == TM_TIMER) {
+    g_tmNotice = TN_TIMER; g_tmMode = TM_OFF;
+  } else if (g_tmMode == TM_FOCUS) {
+    g_pomoN++; pomo_count();
+    g_tmNotice = TN_BREAK;
+    tm_start(TM_BREAK, g_pomoN >= POMO_CYCLE ? POMO_LONG_S : POMO_SHORT_S);
+  } else if (g_pomoN >= POMO_CYCLE) {          // fine della pausa lunga: ciclo finito
+    g_tmNotice = TN_CYCLE; g_tmMode = TM_OFF; g_pomoN = 0;
+  } else {
+    g_tmNotice = TN_FOCUS;
+    tm_start(TM_FOCUS, POMO_FOCUS_S);
+  }
+  g_ntPend = NT_TIMER; g_ntT0 = 0;
+  tm_changed();
+}
+
+// menu del timer: si apre toccando l'ora nella home
+static lv_obj_t *g_tmMenu = nullptr;
+static void tm_menu_close() { if (g_tmMenu) { lv_obj_delete(g_tmMenu); g_tmMenu = nullptr; } }
+static void tm_menu_cb(lv_event_t *e) {
+  int opt = (int)(intptr_t)lv_event_get_user_data(e);
+  tm_menu_close();
+  static const uint16_t MIN[5] = {0, 5, 10, 15, 30};
+  if (opt == 0) { g_pomoN = 0; tm_start(TM_FOCUS, POMO_FOCUS_S); }
+  else if (opt >= 1 && opt <= 4) tm_start(TM_TIMER, MIN[opt] * 60);
+  else if (opt == 10) { g_tmMode = TM_OFF; g_pomoN = 0; Serial.println("[TIMER] fermato"); }
+  else if (opt == 11) g_tmEndMs = millis();                   // salta la fase: tm_tick passa alla successiva
+  else if (opt == 12) { g_tmEndMs += 5UL * 60UL * 1000UL; g_tmLenS += 5 * 60; }
+  else return;                                                // annulla
+  tm_changed();
+}
+static void tm_menu_open(lv_event_t *e) {
+  (void)e;
+  if (g_tmMenu) return;
+  lv_obj_t *s = plain_obj(lv_layer_top());
+  g_tmMenu = s;
+  lv_obj_set_size(s, 480, 320);
+  lv_obj_set_style_bg_color(s, lv_color_hex(C_BG), 0);
+  lv_obj_set_style_bg_opa(s, LV_OPA_80, 0);
+  lv_obj_add_flag(s, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(s, tm_menu_cb, LV_EVENT_CLICKED, (void *)(intptr_t)-1);
+  char lg[40];
+  int today = pomo_today();
+  if (today) snprintf(lg, sizeof(lg), TRS("timer " U_MIDDOT " oggi %d %s", "timer " U_MIDDOT " today %d %s"), today, pomo_word(today));
+  else       strcpy(lg, TRS("timer e pomodoro", "timer and pomodoro"));
+  lv_obj_t *b = tbox(s, 90, 60, 300, 200, lg, C_ACCENT);
+  lv_obj_set_style_bg_color(b, lv_color_hex(C_BG), 0);
+  lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+  lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);             // i tocchi sul riquadro non chiudono
+  if (!g_tmMode) {
+    const char *L[5] = {"pomodoro 25/5", "5 min", "10 min", "15 min", "30 min"};
+    for (int i = 0; i < 5; i++)
+      tbtn(b, 20 + (i % 2) * 134, 22 + (i / 2) * 56, 124, 42, L[i], F14, i == 0 ? C_ACCENT : C_TEXT, C_BORDER,
+           tm_menu_cb, (void *)(intptr_t)i);
+    tbtn(b, 154, 134, 124, 42, TRS("annulla", "cancel"), F14, C_MUTED, C_BORDER, tm_menu_cb, (void *)(intptr_t)-1);
+  } else {
+    char st[32]; tm_label(st, sizeof(st));
+    tstatic(b, st, F22, tm_color(), 20, 26);
+    tbtn(b, 20, 78, 124, 42, TRS("ferma", "stop"), F14, C_BAD, C_BORDER, tm_menu_cb, (void *)(intptr_t)10);
+    if (g_tmMode == TM_TIMER)
+      tbtn(b, 154, 78, 124, 42, "+5 min", F14, C_TEXT, C_BORDER, tm_menu_cb, (void *)(intptr_t)12);
+    else
+      tbtn(b, 154, 78, 124, 42, TRS("salta fase", "skip phase"), F14, C_TEXT, C_BORDER, tm_menu_cb, (void *)(intptr_t)11);
+    tbtn(b, 20, 134, 258, 42, TRS("annulla", "cancel"), F14, C_MUTED, C_BORDER, tm_menu_cb, (void *)(intptr_t)-1);
+  }
 }
 
 // Riempie tutti i valori arrivati dal fetch (senza ricostruire la schermata).
@@ -3571,6 +3779,7 @@ static void set_hdr_status() {
   if (!g_hdrStatus) return;
   char buf[40]; uint32_t color;
   if (g_refreshing)        { strcpy(buf, TRS("aggiornamento...", "updating...")); color = C_ACCENT; }
+  else if (g_tmMode)       { tm_label(buf, sizeof(buf)); color = tm_color(); }
   else if (g_userPause && g_pauseUntil) {
     char c[12]; fmt_hm(g_pauseUntil, c, sizeof(c));
     snprintf(buf, sizeof(buf), TRS("pausa fino %s", "paused until %s"), c); color = C_WARN;
@@ -4377,11 +4586,12 @@ static void render_state() {
   g_state = g_pending;
   stop_web();                                 // ogni schermata avvia il server che le serve
   moment_close();                             // l'overlay vive in lv_layer_top
-  if (g_cc.scrim) {                           // l'avviso di Claude Code sopravvive ai rebuild del dashboard
-    if (g_state == ST_MAIN) { g_ccPend = true; g_ccT0 = g_cc.t0; }
-    cc_close();
+  if (g_nt.scrim) {                           // l'avviso a schermo intero sopravvive ai rebuild del dashboard
+    if (g_state == ST_MAIN) { g_ntPend = g_nt.kind; g_ntT0 = g_nt.t0; }
+    notice_close();
   }
   pause_menu_close();
+  tm_menu_close();
   night_clock_close();
   lv_obj_clean(lv_layer_top());
   // invalida i puntatori vivi prima di distruggere la vecchia schermata
@@ -4741,6 +4951,7 @@ void loop() {
   if (g_netDone) net_apply();
   screen_tick();
   night_clock_sync();
+  tm_tick();
   // home: meteo ogni 30 min (nuovo tentativo dopo 5 min se fallisce), PC ogni 5 s se la home e' visibile
   if (g_wxDone) {
     g_wxDone = false;
@@ -4785,7 +4996,7 @@ void loop() {
     uint32_t now = millis();
     static uint32_t lastTick = 0, lastBar = 0, lastBob = 0, blinkAt = 0;
     static bool blinkClosed = false;
-    if (now - lastTick > 1000) { lastTick = now; dash_tick(); home_tick(); }
+    if (now - lastTick > 1000) { lastTick = now; dash_tick(); home_tick(); if (g_tmMode) set_hdr_status(); }
     if (now - lastBar > 1000 && g_ui.refBar) {       // filo del refresh: al massimo 1 ridisegno/s
       lastBar = now;
       const int W = 275;
@@ -4838,7 +5049,7 @@ void loop() {
         }
       }
     }
-    if (g_slideSec > 0 && g_ui.tv && !g_refreshing && !g_mo.scrim && !g_cc.scrim && g_screenMode < 2 &&
+    if (g_slideSec > 0 && g_ui.tv && !g_refreshing && !g_mo.scrim && !g_nt.scrim && !g_tmMenu && g_screenMode < 2 &&
         now - g_lastTouchMs > 10000 && now - g_lastSlideMs > (uint32_t)g_slideSec * 1000) {
       g_lastSlideMs = now;
       int next = (g_curTile + 1) % NTILES;
@@ -4852,7 +5063,7 @@ void loop() {
     }
     // torna alla home dopo N minuti senza tocchi (una volta per periodo di inattivita')
     static uint32_t homedFor = 0;
-    if (g_clockIdx && g_ui.tv && g_curTile != 0 && !g_mo.scrim && !g_cc.scrim && !g_pauseMenu && g_screenMode < 2 &&
+    if (g_clockIdx && g_ui.tv && g_curTile != 0 && !g_mo.scrim && !g_nt.scrim && !g_pauseMenu && !g_tmMenu && g_screenMode < 2 &&
         homedFor != g_lastTouchMs && now - g_lastTouchMs > CLOCK_MIN[g_clockIdx] * 60000UL) {
       homedFor = g_lastTouchMs;
       lv_tileview_set_tile_by_index(g_ui.tv, 0, 0, LV_ANIM_ON);
@@ -4864,14 +5075,16 @@ void loop() {
       g_pendWin = -1;
     }
     if (g_mo.scrim) moment_tick();
-    // Claude Code: riaccende lo schermo attenuato; di notte (schermo spento o orologio) niente avviso
-    if (g_ccPend && g_screenMode >= 2) { g_ccPend = false; g_ccT0 = 0; }
-    if (g_ccPend && !g_mo.scrim && !g_refreshing) {
-      g_ccPend = false;
-      if (!g_ccT0) g_lastTouchMs = millis();     // avviso nuovo: riaccende lo schermo attenuato
-      cc_show();
+    // Avvisi di Claude Code e del timer: uno nuovo riaccende lo schermo. Di notte (schermo spento o
+    // orologio) quelli di Claude Code non compaiono; il timer invece si', l'hai chiesto tu.
+    if (g_ntPend == NT_CLAUDE && g_screenMode >= 2 && !g_ntT0) g_ntPend = NT_NONE;
+    if (g_ntPend && !g_mo.scrim && !g_refreshing) {
+      int k = g_ntPend;
+      g_ntPend = NT_NONE;
+      if (!g_ntT0) g_lastTouchMs = millis();
+      if (k == NT_CLAUDE) cc_show(); else tm_show();
     }
-    if (g_cc.scrim) cc_tick();
+    if (g_nt.scrim) notice_tick();
   }
 
   delay(5);
