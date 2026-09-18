@@ -427,9 +427,13 @@ static long g_pomoDay = 0;
 static int  pomo_today();
 static uint32_t g_tmEndMs = 0, g_tmLenS = 0;
 static int  g_pomoN = 0;                      // pomodori completati nel ciclo in corso
-#define POMO_FOCUS_S (25 * 60)                // pomodoro: 25 min di focus, 5 di pausa, 15 dopo il quarto
-#define POMO_SHORT_S (5 * 60)
-#define POMO_LONG_S  (15 * 60)
+// pomodoro: tre impostazioni pronte (focus / pausa / pausa lunga dopo il quarto, in minuti)
+struct PomoPreset { uint8_t focus, brk, lng; };
+static const PomoPreset POMO_PRESETS[3] = {{25, 5, 15}, {50, 10, 20}, {15, 3, 10}};
+static int g_pomoPre = 0;                     // impostazione del ciclo in corso
+#define POMO_FOCUS_S (POMO_PRESETS[g_pomoPre].focus * 60)
+#define POMO_SHORT_S (POMO_PRESETS[g_pomoPre].brk * 60)
+#define POMO_LONG_S  (POMO_PRESETS[g_pomoPre].lng * 60)
 #define POMO_CYCLE   4
 
 // ============================================================
@@ -2673,8 +2677,20 @@ static void build_tile_home(lv_obj_t *t) {
   lv_obj_add_flag(g_ui.hmTime, LV_OBJ_FLAG_CLICKABLE);           // tocca l'ora: timer e pomodoro
   lv_obj_set_ext_click_area(g_ui.hmTime, 8);
   lv_obj_add_event_cb(g_ui.hmTime, tm_menu_open, LV_EVENT_SHORT_CLICKED, NULL);
-  g_ui.hmDate = tlabel(t, F14, C_MUTED, 13, 80);
-  lv_obj_set_width(g_ui.hmDate, 284);
+  // pomodoro disegnato (il font non ha il glifo): dice che la riga sotto l'ora apre timer e pomodoro
+  lv_obj_t *tom = plain_obj(t);
+  lv_obj_set_pos(tom, 13, 81);
+  lv_obj_set_size(tom, 14, 16);
+  rrect(tom, 0, 3, 14, 13, 6, C_BAD);
+  rrect(tom, 3, 1, 8, 3, 1, C_OK);
+  rrect(tom, 6, 0, 2, 3, 0, C_OK);
+  g_ui.hmDate = tlabel(t, F14, C_MUTED, 33, 80);
+  lv_obj_set_width(g_ui.hmDate, 264);
+  for (lv_obj_t *o : {tom, g_ui.hmDate}) {
+    lv_obj_add_flag(o, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_ext_click_area(o, 8);
+    lv_obj_add_event_cb(o, tm_menu_open, LV_EVENT_SHORT_CLICKED, NULL);
+  }
   lv_label_set_long_mode(g_ui.hmDate, LV_LABEL_LONG_DOT);
 
   g_ui.hmWxIcon = plain_obj(t);
@@ -2734,14 +2750,12 @@ static void home_tick() {
   for (char *q = city; *q; q++) if (*q >= 'A' && *q <= 'Z') *q += 32;
   if (g_lang) snprintf(s, sizeof(s), "%s %d %s " U_MIDDOT " %s", GEN[tv.tm_wday], tv.tm_mday, MEN[tv.tm_mon], city);
   else        snprintf(s, sizeof(s), "%s %d %s " U_MIDDOT " %s", GIT[tv.tm_wday], tv.tm_mday, MIT[tv.tm_mon], city);
-  if (g_tmMode) {                                  // timer in corso: al posto della data, fase e ora di fine
-    char hm[12], ph[24];                            // (il conto alla rovescia e' nella testata)
+  if (g_tmMode) {                                  // timer in corso: sotto l'ora, conto alla rovescia e fine
+    char hm[12], ph[32];
     int32_t left = (int32_t)(g_tmEndMs - millis());
     fmt_hm((uint32_t)now + (left > 0 ? (left + 999) / 1000 : 0), hm, sizeof(hm));
-    if (g_tmMode == TM_FOCUS)      snprintf(ph, sizeof(ph), "focus %d/%d", g_pomoN + 1, POMO_CYCLE);
-    else if (g_tmMode == TM_BREAK) strcpy(ph, TRS("pausa", "break"));
-    else                           snprintf(ph, sizeof(ph), "timer %u min", (unsigned)(g_tmLenS / 60));
-    snprintf(s, sizeof(s), TRS("%s " U_MIDDOT " fino alle %s", "%s " U_MIDDOT " until %s"), ph, hm);
+    tm_label(ph, sizeof(ph));
+    snprintf(s, sizeof(s), TRS("%s " U_MIDDOT " fine %s", "%s " U_MIDDOT " ends %s"), ph, hm);
   }
   label_set(g_ui.hmDate, s);
   label_color(g_ui.hmDate, g_tmMode ? tm_color() : C_MUTED);
@@ -3673,15 +3687,15 @@ static void tm_tick() {
   tm_changed();
 }
 
-// menu del timer: si apre toccando l'ora nella home
+// menu del timer: si apre toccando l'ora o la riga col pomodoro nella home
 static lv_obj_t *g_tmMenu = nullptr;
 static void tm_menu_close() { if (g_tmMenu) { lv_obj_delete(g_tmMenu); g_tmMenu = nullptr; } }
 static void tm_menu_cb(lv_event_t *e) {
   int opt = (int)(intptr_t)lv_event_get_user_data(e);
   tm_menu_close();
-  static const uint16_t MIN[5] = {0, 5, 10, 15, 30};
-  if (opt == 0) { g_pomoN = 0; tm_start(TM_FOCUS, POMO_FOCUS_S); }
-  else if (opt >= 1 && opt <= 4) tm_start(TM_TIMER, MIN[opt] * 60);
+  static const uint16_t MIN[4] = {5, 10, 15, 30};
+  if (opt >= 0 && opt <= 2) { g_pomoPre = opt; g_pomoN = 0; tm_start(TM_FOCUS, POMO_FOCUS_S); }
+  else if (opt >= 3 && opt <= 6) tm_start(TM_TIMER, MIN[opt - 3] * 60);
   else if (opt == 10) { g_tmMode = TM_OFF; g_pomoN = 0; Serial.println("[TIMER] fermato"); }
   else if (opt == 11) g_tmEndMs = millis();                   // salta la fase: tm_tick passa alla successiva
   else if (opt == 12) { g_tmEndMs += 5UL * 60UL * 1000UL; g_tmLenS += 5 * 60; }
@@ -3702,25 +3716,36 @@ static void tm_menu_open(lv_event_t *e) {
   int today = pomo_today();
   if (today) snprintf(lg, sizeof(lg), TRS("timer " U_MIDDOT " oggi %d %s", "timer " U_MIDDOT " today %d %s"), today, pomo_word(today));
   else       strcpy(lg, TRS("timer e pomodoro", "timer and pomodoro"));
-  lv_obj_t *b = tbox(s, 90, 60, 300, 200, lg, C_ACCENT);
+  lv_obj_t *b = tbox(s, 90, 42, 300, 236, lg, C_ACCENT);
   lv_obj_set_style_bg_color(b, lv_color_hex(C_BG), 0);
   lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
   lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);             // i tocchi sul riquadro non chiudono
   if (!g_tmMode) {
-    const char *L[5] = {"pomodoro 25/5", "5 min", "10 min", "15 min", "30 min"};
-    for (int i = 0; i < 5; i++)
-      tbtn(b, 20 + (i % 2) * 134, 22 + (i / 2) * 56, 124, 42, L[i], F14, i == 0 ? C_ACCENT : C_TEXT, C_BORDER,
-           tm_menu_cb, (void *)(intptr_t)i);
-    tbtn(b, 154, 134, 124, 42, TRS("annulla", "cancel"), F14, C_MUTED, C_BORDER, tm_menu_cb, (void *)(intptr_t)-1);
+    tstatic(b, TRS("pomodoro " U_MIDDOT " focus/pausa in minuti", "pomodoro " U_MIDDOT " focus/break in minutes"), F12, C_MUTED, 20, 12);
+    for (int i = 0; i < 3; i++) {
+      char l[12]; snprintf(l, sizeof(l), "%d/%d", POMO_PRESETS[i].focus, POMO_PRESETS[i].brk);
+      tbtn(b, 20 + i * 90, 30, 80, 40, l, F14, C_ACCENT, C_BORDER, tm_menu_cb, (void *)(intptr_t)i);
+    }
+    tstatic(b, "timer", F12, C_MUTED, 20, 82);
+    const char *T[4] = {"5 min", "10 min", "15 min", "30 min"};
+    for (int i = 0; i < 4; i++)
+      tbtn(b, 20 + i * 67, 100, 58, 40, T[i], F14, C_TEXT, C_BORDER, tm_menu_cb, (void *)(intptr_t)(3 + i));
+    tbtn(b, 20, 158, 258, 38, TRS("annulla", "cancel"), F14, C_MUTED, C_BORDER, tm_menu_cb, (void *)(intptr_t)-1);
   } else {
     char st[32]; tm_label(st, sizeof(st));
-    tstatic(b, st, F22, tm_color(), 20, 26);
-    tbtn(b, 20, 78, 124, 42, TRS("ferma", "stop"), F14, C_BAD, C_BORDER, tm_menu_cb, (void *)(intptr_t)10);
+    tstatic(b, st, F22, tm_color(), 20, 30);
+    if (g_tmMode != TM_TIMER) {
+      char pr[48];
+      snprintf(pr, sizeof(pr), TRS("pomodoro %d/%d, pausa lunga %d", "pomodoro %d/%d, long break %d"),
+               POMO_PRESETS[g_pomoPre].focus, POMO_PRESETS[g_pomoPre].brk, POMO_PRESETS[g_pomoPre].lng);
+      tstatic(b, pr, F12, C_MUTED, 20, 64);
+    }
+    tbtn(b, 20, 100, 124, 40, TRS("ferma", "stop"), F14, C_BAD, C_BORDER, tm_menu_cb, (void *)(intptr_t)10);
     if (g_tmMode == TM_TIMER)
-      tbtn(b, 154, 78, 124, 42, "+5 min", F14, C_TEXT, C_BORDER, tm_menu_cb, (void *)(intptr_t)12);
+      tbtn(b, 154, 100, 124, 40, "+5 min", F14, C_TEXT, C_BORDER, tm_menu_cb, (void *)(intptr_t)12);
     else
-      tbtn(b, 154, 78, 124, 42, TRS("salta fase", "skip phase"), F14, C_TEXT, C_BORDER, tm_menu_cb, (void *)(intptr_t)11);
-    tbtn(b, 20, 134, 258, 42, TRS("annulla", "cancel"), F14, C_MUTED, C_BORDER, tm_menu_cb, (void *)(intptr_t)-1);
+      tbtn(b, 154, 100, 124, 40, TRS("salta fase", "skip phase"), F14, C_TEXT, C_BORDER, tm_menu_cb, (void *)(intptr_t)11);
+    tbtn(b, 20, 158, 258, 38, TRS("annulla", "cancel"), F14, C_MUTED, C_BORDER, tm_menu_cb, (void *)(intptr_t)-1);
   }
 }
 

@@ -1001,7 +1001,11 @@ function buildTileHome(t) {
   h.time = label(t, '', 96, C.TEXT, 7, -6); Object.assign(h.time.style, { fontWeight: '500', letterSpacing: '-3px', lineHeight: '1' });
   h.time.style.cursor = 'pointer';   // tocca l'ora: timer e pomodoro
   h.time.addEventListener('click', (e) => { if (realMs() - lastDragAt < 300) return; e.stopPropagation(); tmMenuOpen(); });
-  h.date = label(t, '', 14, C.MUTED, 13, 80);
+  // pomodoro disegnato accanto alla riga sotto l'ora: anche lei apre timer e pomodoro
+  const tom = obj(t, 13, 81, 14, 16, { cursor: 'pointer' });
+  rrect(tom, 0, 3, 14, 13, 6, C.BAD); rrect(tom, 3, 1, 8, 3, 1, C.OK); rrect(tom, 6, 0, 2, 3, 0, C.OK);
+  h.date = label(t, '', 14, C.MUTED, 33, 80); Object.assign(h.date.style, { width: '264px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' });
+  for (const o of [tom, h.date]) o.addEventListener('click', (e) => { if (realMs() - lastDragAt < 300) return; e.stopPropagation(); tmMenuOpen(); });
   h.icon = obj(t, 310, 9, 44, 44);
   h.temp = label(t, '', 54, C.TEXT, 362, -1); h.temp.classList.add('pctl');
   h.desc = label(t, '', 12, C.MUTED, 310, 52);
@@ -1029,8 +1033,7 @@ function homeTick() {
   const MI = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
   const ME = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
   if (TM.mode) {   // timer in corso: al posto della data, fase e ora di fine (il conto alla rovescia e' nella testata)
-    const ph = TM.mode === TM_FOCUS ? `focus ${TM.n + 1}/${POMO.CYCLE}` : TM.mode === TM_BREAK ? TRS('pausa', 'break') : `timer ${Math.floor(TM.lenS / 60)} min`;
-    setText(h.date, TRS(`${ph} · fino alle ${fmtHm(nowEpoch() + tmLeft())}`, `${ph} · until ${fmtHm(nowEpoch() + tmLeft())}`), tmColor());
+    setText(h.date, TRS(`${tmLabel()} · fine ${fmtHm(nowEpoch() + tmLeft())}`, `${tmLabel()} · ends ${fmtHm(nowEpoch() + tmLeft())}`), tmColor());
   } else setText(h.date, `${P.lang ? GE[p.wd] : GI[p.wd]} ${p.d} ${(P.lang ? ME : MI)[p.mo - 1]} · ${WX.city.toLowerCase()}`, C.MUTED);
   setText(h.desc, Math.floor(realMs() / 6000) % 2 === 0 ? `${wxDesc(WX.code)} · ${WX.tmax}°/${WX.tmin}°`
     : `${TRS('domani', 'tomorrow')} ${WX.tmax2}°/${WX.tmin2}° ${wxDesc(WX.code2)}`);
@@ -1450,7 +1453,10 @@ function ccShow(t0) {
 // ---- Timer e pomodoro (tocca l'ora nella home) ----
 // Pomodoro: 25 min di focus e 5 di pausa, pausa lunga di 15 dopo il quarto, poi si ferma.
 const TM_OFF = 0, TM_TIMER = 1, TM_FOCUS = 2, TM_BREAK = 3, POMO = { FOCUS: 25 * 60, SHORT: 5 * 60, LONG: 15 * 60, CYCLE: 4 };
-const TM = { mode: TM_OFF, endMs: 0, lenS: 0, n: 0, today: 0, day: '', notice: '' };
+// tre impostazioni pronte: focus / pausa / pausa lunga dopo il quarto (minuti)
+const POMO_PRESETS = [[25, 5, 15], [50, 10, 20], [15, 3, 10]];
+function pomoPreset(i) { TM.pre = i; const [f, b, l] = POMO_PRESETS[i]; Object.assign(POMO, { FOCUS: f * 60, SHORT: b * 60, LONG: l * 60 }); }
+const TM = { mode: TM_OFF, endMs: 0, lenS: 0, n: 0, today: 0, day: '', notice: '', pre: 0 };
 const localDay = () => { const p = localParts(nowEpoch()); return `${p.mo}-${p.d}`; };
 const pomoWord = (n) => (n === 1 ? 'pomodoro' : TRS('pomodori', 'pomodoros'));
 const pomoToday = () => (TM.day === localDay() ? TM.today : 0);
@@ -1494,20 +1500,23 @@ function tmMenuOpen() {
   s.addEventListener('click', (e) => { e.stopPropagation(); tmMenuClose(); });
   TMENU = s;
   const today = pomoToday();
-  const b = tbox(s, 90, 60, 300, 200, today ? TRS(`timer · oggi ${today} ${pomoWord(today)}`, `timer · today ${today} ${pomoWord(today)}`) : TRS('timer e pomodoro', 'timer and pomodoro'), C.ACCENT);
+  const b = tbox(s, 90, 42, 300, 236, today ? TRS(`timer · oggi ${today} ${pomoWord(today)}`, `timer · today ${today} ${pomoWord(today)}`) : TRS('timer e pomodoro', 'timer and pomodoro'), C.ACCENT);
   b.style.background = C.BG; b._lg.style.color = C.ACCENT;
   b.addEventListener('click', (e) => e.stopPropagation());
-  const btn = (txt, x, y, w, fn, color) => { const bt = tbtn(b, txt, w, 42, () => { tmMenuClose(); if (fn) { fn(); tmChanged(); } }, { color, size: 14 }); bt.style.left = x + 'px'; bt.style.top = y + 'px'; };
+  const btn = (txt, x, y, w, h, fn, color) => { const bt = tbtn(b, txt, w, h, () => { tmMenuClose(); if (fn) { fn(); tmChanged(); } }, { color, size: 14 }); bt.style.left = x + 'px'; bt.style.top = y + 'px'; };
   if (!TM.mode) {
-    [['pomodoro 25/5', 0], ['5 min', 5], ['10 min', 10], ['15 min', 15], ['30 min', 30]].forEach(([t, m], i) =>
-      btn(t, 20 + (i % 2) * 134, 22 + Math.floor(i / 2) * 56, 124, () => { if (m) tmStart(TM_TIMER, m * 60); else { TM.n = 0; tmStart(TM_FOCUS, POMO.FOCUS); } }, i ? C.TEXT : C.ACCENT));
-    btn(TRS('annulla', 'cancel'), 154, 134, 124, null, C.MUTED);
+    label(b, TRS('pomodoro · focus/pausa in minuti', 'pomodoro · focus/break in minutes'), 12, C.MUTED, 20, 12);
+    POMO_PRESETS.forEach(([f, br], i) => btn(`${f}/${br}`, 20 + i * 90, 30, 80, 40, () => { pomoPreset(i); TM.n = 0; tmStart(TM_FOCUS, POMO.FOCUS); }, C.ACCENT));
+    label(b, 'timer', 12, C.MUTED, 20, 82);
+    [5, 10, 15, 30].forEach((m, i) => btn(`${m} min`, 20 + i * 67, 100, 58, 40, () => tmStart(TM_TIMER, m * 60), C.TEXT));
+    btn(TRS('annulla', 'cancel'), 20, 158, 258, 38, null, C.MUTED);
   } else {
-    label(b, tmLabel(), 22, tmColor(), 20, 26);
-    btn(TRS('ferma', 'stop'), 20, 78, 124, () => { TM.mode = TM_OFF; TM.n = 0; slog('[TIMER] fermato'); }, C.BAD);
-    if (TM.mode === TM_TIMER) btn('+5 min', 154, 78, 124, () => { TM.endMs += 5 * 60000; TM.lenS += 300; }, C.TEXT);
-    else btn(TRS('salta fase', 'skip phase'), 154, 78, 124, () => { TM.endMs = millis(); }, C.TEXT);
-    btn(TRS('annulla', 'cancel'), 20, 134, 258, null, C.MUTED);
+    label(b, tmLabel(), 22, tmColor(), 20, 30);
+    if (TM.mode !== TM_TIMER) { const [f, br, l] = POMO_PRESETS[TM.pre]; label(b, TRS(`pomodoro ${f}/${br}, pausa lunga ${l}`, `pomodoro ${f}/${br}, long break ${l}`), 12, C.MUTED, 20, 64); }
+    btn(TRS('ferma', 'stop'), 20, 100, 124, 40, () => { TM.mode = TM_OFF; TM.n = 0; slog('[TIMER] fermato'); }, C.BAD);
+    if (TM.mode === TM_TIMER) btn('+5 min', 154, 100, 124, 40, () => { TM.endMs += 5 * 60000; TM.lenS += 300; }, C.TEXT);
+    else btn(TRS('salta fase', 'skip phase'), 154, 100, 124, 40, () => { TM.endMs = millis(); }, C.TEXT);
+    btn(TRS('annulla', 'cancel'), 20, 158, 258, 38, null, C.MUTED);
   }
 }
 
