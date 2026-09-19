@@ -2754,6 +2754,11 @@ static void wx_week_open(lv_event_t *e) {
   tstatic(s, TRS("[ tocca per chiudere ]", "[ tap to close ]"), F12, C_FAINT, 290, 280);
 }
 
+// home: tocca il riquadro claude o pc per andare alla pagina con i dettagli
+static void home_goto_cb(lv_event_t *e) {
+  int tile = (int)(intptr_t)lv_event_get_user_data(e);
+  if (g_ui.tv) lv_tileview_set_tile_by_index(g_ui.tv, tile, 0, LV_ANIM_ON);
+}
 static void build_tile_home(lv_obj_t *t) {
   // griglia aurea: colonna sinistra fino a x 297 (480 / phi), meteo da 310
   g_ui.hmTime = tlabel(t, F96, C_TEXT, 7, 7);
@@ -2801,6 +2806,8 @@ static void build_tile_home(lv_obj_t *t) {
   // centrato tra la riga della data (lettere fino a y 98) e il riquadro pc (y 206): 17 sopra e 17 sotto;
   // righe del metro a passo 30
   lv_obj_t *b = tbox(t, 13, 115, 454, 74, "claude");
+  lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);                       // -> pagina ora
+  lv_obj_add_event_cb(b, home_goto_cb, LV_EVENT_SHORT_CLICKED, (void *)(intptr_t)1);
   const char *k[2] = {"5h", TRS("sett.", "week")};
   for (int i = 0; i < 2; i++) {
     int y = 13 + i * 30;
@@ -2814,6 +2821,8 @@ static void build_tile_home(lv_obj_t *t) {
   }
 
   lv_obj_t *p = tbox(t, 13, 206, 454, 40, "pc", C_BORDER, &g_ui.hmPcLegend);
+  lv_obj_add_flag(p, LV_OBJ_FLAG_CLICKABLE);                       // -> pagina pc
+  lv_obj_add_event_cb(p, home_goto_cb, LV_EVENT_SHORT_CLICKED, (void *)(intptr_t)6);
   g_ui.hmPcRow = trow(p, 13, 9);
   const char *pk[4] = {"cpu ", "   ram ", "   gpu ", TRS("   disco ", "   disk ")};
   for (int i = 0; i < 4; i++) {

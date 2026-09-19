@@ -1043,6 +1043,8 @@ function buildTileHome(t) {
     o.addEventListener('click', (e) => { if (realMs() - lastDragAt < 300) return; e.stopPropagation(); wxWeekOpen(); });
   }
   const b = tbox(t, 13, 115, 454, 74, 'claude');
+  const goTo = (el, tile) => { el.style.cursor = 'pointer'; el.addEventListener('click', (e) => { if (realMs() - lastDragAt < 300) return; e.stopPropagation(); setTile(tile, true); }); };
+  goTo(b, 1);                                                      // riquadro claude -> pagina ora
   h.row = [0, 1].map((i) => {
     const y = 13 + i * 30;
     label(b, i ? TRS('sett.', 'week') : '5h', 14, C.MUTED, 13, y);
@@ -1053,6 +1055,7 @@ function buildTileHome(t) {
     return { blk, pct, info, right };
   });
   h.pcBox = tbox(t, 13, 206, 454, 40, 'pc');
+  goTo(h.pcBox, 6);                                                // riquadro pc -> pagina pc
   h.pc = label(h.pcBox, '', 14, C.TEXT, 13, 9);
   homeRedraw();
 }
