@@ -427,6 +427,8 @@ static void moment_tick();
 static void moment_close();
 static void cc_event(long id, const char *ev, const char *proj, int dur, int age);
 static int g_setGroup = 0;
+static int g_lastMoWin = 0, g_lastMoThr = 0, g_lastMoPeak = 0;   // ultimo avviso di soglia/reset
+static uint32_t g_lastMoAt = 0;
 // Aggiornamento del firmware dall'ultima release di GitHub: controllo (task extra) e installazione
 // (task di rete: scrivere la flash da uno stack in PSRAM non si puo')
 enum { UPD_IDLE = 0, UPD_CHECKING, UPD_AVAILABLE, UPD_UPTODATE, UPD_ERROR, UPD_INSTALLING, UPD_FAILED, UPD_REBOOT };
@@ -3616,10 +3618,16 @@ static void notice_close() {
 }
 static void notice_close_cb(lv_event_t *e) { (void)e; notice_close(); }
 
+static NoticeText g_lastNt;                    // ultimo avviso a schermo intero (Claude, timer, pomodoro)
+static uint32_t g_lastNtAt = 0;                // millis in cui e' comparso (0 = nessuno)
+static bool g_ntReplay = false;                // riaperto dall'utente: niente suono sul PC
 static void notice_show(const NoticeText &n) {
   notice_close();
   g_nt.kind = n.kind; g_nt.col = n.col; g_nt.hop = n.hop; g_nt.maxMs = n.maxMs;
-  if (!g_ntT0) {                               // avviso nuovo (non rimesso dopo un rebuild): suono sul PC
+  if (!g_ntT0 && !g_ntReplay) {               // avviso nuovo: e' l'ultimo, da riaprire col doppio tocco
+    g_lastNt = n; g_lastNtAt = millis();
+  }
+  if (!g_ntT0 && !g_ntReplay) {               // avviso nuovo (non rimesso dopo un rebuild): suono sul PC
     char title[64];
     if (n.big >= 0) snprintf(title, sizeof(title), "%s " U_MIDDOT " %d%s", n.top, n.big, n.unit);
     else            strlcpy(title, n.top, sizeof(title));
@@ -4055,20 +4063,30 @@ static void pause_long_cb(lv_event_t *e) {
   tbtn(b, 20, 136, 258, 38, TRS("annulla", "cancel"), F14, C_MUTED, C_BORDER, pause_menu_cb, (void *)(intptr_t)-1);
 }
 // doppio tocco su "✻ ritmo-code" = demo dei momenti
+// doppio tocco su "✻ ritmo-code": riapre l'ultimo avviso (soglia/reset o Claude/timer, il piu' recente)
 static void logo_cb(lv_event_t *e) {
   (void)e;
   static uint32_t lastClick = 0;
-  static int di = 0;
   uint32_t now = millis();
-  if (now - lastClick < 450) {
-    static const int T[5] = {25, 50, 70, 100, 0};
-    g_pendPeak = 0;
-    show_moment((di / 5) % 2, T[di % 5]);
-    di++;
-    lastClick = 0;
-  } else {
-    lastClick = now;
+  if (now - lastClick >= 450) { lastClick = now; return; }
+  lastClick = 0;
+  if (g_lastMoAt && g_lastMoAt >= g_lastNtAt) {
+    g_pendPeak = g_lastMoPeak;
+    show_moment(g_lastMoWin, g_lastMoThr);
+    return;
   }
+  g_ntReplay = true;
+  if (g_lastNtAt) notice_show(g_lastNt);
+  else {
+    NoticeText n = {};
+    n.kind = NT_TIMER; n.col = C_MUTED; n.maxMs = 5000; n.big = -1;
+    strcpy(n.legend, TRS("avvisi", "alerts"));
+    strlcpy(n.top, TRS("nessun avviso recente", "no recent alerts"), sizeof(n.top));
+    strlcpy(n.word, TRS("tutto tranquillo", "all quiet"), sizeof(n.word));
+    strlcpy(n.msg, TRS("qui ritrovi l'ultimo avviso con un doppio tocco", "double-tap here to see the last alert again"), sizeof(n.msg));
+    notice_show(n);
+  }
+  g_ntReplay = false;
 }
 
 static void ui_main() {
@@ -4513,7 +4531,7 @@ static void ui_settings() {
           case UPD_FAILED:    strcpy(uv, TRS("non riuscito, riprova", "failed, retry")); break;
           default:            strcpy(uv, TRS("cerca", "check")); break;
         }
-        kv_row(lst, TRS("aggiornamenti", "updates"), uv, C_TEXT, g_updState == UPD_AVAILABLE ? C_OK : C_ACCENT,
+        kv_row(lst, TRS("aggiornamenti", "updates"), uv, C_TEXT, g_updState == UPD_UPTODATE ? C_OK : C_ACCENT,
                settings_action_cb, (void *)(intptr_t)26);
       }
       kv_row(lst, TRS("aggiorna da browser", "update from browser"), "wifi", C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)14);
@@ -5485,6 +5503,7 @@ void loop() {
     // Momenti di soglia: mostra quello in sospeso e anima l'overlay attivo
     if (g_pendWin >= 0 && !g_mo.scrim && !g_refreshing && g_screenMode < 2) {
       show_moment(g_pendWin, g_pendThr);
+      g_lastMoWin = g_pendWin; g_lastMoThr = g_pendThr; g_lastMoPeak = g_pendPeak; g_lastMoAt = millis();
       char t[64], m[64];
       const char *wn = g_pendWin ? TRS("7 giorni", "7-day") : TRS("5 ore", "5-hour");
       if (g_pendThr) {

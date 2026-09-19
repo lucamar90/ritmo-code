@@ -9,7 +9,7 @@ Senza computer acceso, senza app, senza cloud.
 
 **Italiano** · [English](README.en.md)
 
-<img src="https://img.shields.io/badge/firmware-v3.9.3-D97757?style=for-the-badge" alt="firmware v3.9.3">
+<img src="https://img.shields.io/badge/firmware-v3.9.4-D97757?style=for-the-badge" alt="firmware v3.9.4">
 <img src="https://img.shields.io/badge/ESP32--S3-AXS15231B%20480×320-1B1A18?style=for-the-badge" alt="ESP32-S3 AXS15231B">
 <img src="https://img.shields.io/badge/LVGL-9.2.2-9BC08A?style=for-the-badge" alt="LVGL 9.2.2">
 <img src="https://img.shields.io/badge/account-fino%20a%204-8E8B82?style=for-the-badge" alt="fino a 4 account">
@@ -44,7 +44,7 @@ L'interfaccia è in stile terminale di Claude Code, in **italiano** o inglese, c
 | <img src="assets/screen-night.png" alt="Orologio notturno"> **Orologio notturno** — di notte, dopo 30 secondi senza tocchi, l'ora a tutto schermo in grigio caldo con data, uso di 5h e settimana e pioggia in arrivo. Luminosità tenue o molto tenue; in alternativa lo schermo si spegne. | <img src="assets/screen-info.png" alt="Info"> **Info** — versione del firmware, hardware e crediti. |
 | <img src="assets/screen-pause.png" alt="Pausa a tempo"> **Pausa richieste** — il tasto ❚❚ in testata ferma le richieste; tenuto premuto offre 30 min, 1 ora, fino alle 7:00 o senza limite. | <img src="assets/screen-settings.png" alt="Impostazioni"> **Impostazioni** — in cinque gruppi: **claude** (intervallo, account, modelli, token), **avvisi** (Claude Code, suoni sul pc, reset), **schermo** (luminosità, notte e orologio notturno, attenuazione, home, slideshow), **rete e pc** (Wi-Fi, indirizzo, intervallo pc) e **sistema** (lingua, fuso, aggiornamento firmware, info). |
 
-> Doppio tocco su **✻ ritmo-code** in alto: anteprima di tutti gli avvisi in sequenza.
+> Doppio tocco su **✻ ritmo-code** in alto: riapre l'ultimo avviso (Claude, timer, pomodoro o soglia).
 
 Le immagini arrivano dal [simulatore](#simulatore) e si rigenerano con `node tools/capture_screens.js`.
 

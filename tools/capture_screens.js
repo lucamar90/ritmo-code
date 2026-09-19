@@ -113,7 +113,7 @@ async function webShot(browser) {
     drives: [['Samsung SSD 970 EVO Plus 500GB', 47, 92]],
     hist: [0, 1, 2].map((k) => Array.from({ length: 240 }, (_, i) => Math.round([10, 6, 60][k] + [8, 5, 3][k] * Math.sin(i / [9, 13, 40][k])))) };
   const status = {
-    fw: '3.9.3', now, ok: true, h5: 62, d7: 38, h5_reset: now + 6240, d7_reset: now + 101 * 3600,
+    fw: '3.9.4', now, ok: true, h5: 62, d7: 38, h5_reset: now + 6240, d7_reset: now + 101 * 3600,
     updated: now - 95, refreshing: false, night: false, status: 'allowed', account: 'Studio',
     models: [
       { name: 'Haiku', id: 'claude-haiku-4-5-20251001', code: 200, ms: 850, up: true, mood: 1, age: 540 },

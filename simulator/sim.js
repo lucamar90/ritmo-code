@@ -16,7 +16,7 @@ const C = {
   BORDER: '#3A3834', TEXT: '#E8E6DF', MUTED: '#8E8B82', FAINT: '#5C5A55', ACCENT: '#D97757',
   OK: '#9BC08A', WARN: '#E0B25A', BAD: '#E06C5A', BLUE: '#7DB9D6', LILAC: '#B7A6E0',
 };
-const CFG = { PIN_LEN: 4, MAX_PIN_ATTEMPTS: 10, LOCKOUT_BASE_SEC: 60, ACCT_MAX: 4, FW: '3.9.3' };
+const CFG = { PIN_LEN: 4, MAX_PIN_ATTEMPTS: 10, LOCKOUT_BASE_SEC: 60, ACCT_MAX: 4, FW: '3.9.4' };
 const DEMO_PIN = '1234';
 
 const $ = (id) => document.getElementById(id);
@@ -1269,11 +1269,17 @@ function uiMain() {
   G.setGroup = 0;   // impostazioni: si riparte dalla pagina principale
   masc.length = 0;
   UI.hdrId = label(scr, '', 13, C.TEXT, 13, 13);
-  // doppio tocco su "✻ ritmo-code" = demo dei momenti
+  // doppio tocco su "✻ ritmo-code" = riapre l'ultimo avviso
   const spot = obj(scr, 4, 2, 200, 36, { cursor: 'pointer' });
   spot.addEventListener('click', () => {
     const now = realMs();
-    if (now - logoClick < 450) { const T = [25, 50, 70, 100, 0]; G.pendPeak = 0; showMoment(Math.floor(demoIdx / 5) % 2, T[demoIdx % 5]); demoIdx++; logoClick = 0; }
+    if (now - logoClick < 450) {
+      logoClick = 0;
+      if (G.lastMo && (!G.lastNt || G.lastMo.at >= G.lastNt.at)) { G.pendPeak = G.lastMo.peak; showMoment(G.lastMo.win, G.lastMo.thr); }
+      else if (G.lastNt) noticeShow(G.lastNt.n);
+      else noticeShow({ kind: NT_TIMER, col: C.MUTED, maxMs: 5000, big: -1, legend: TRS('avvisi', 'alerts'), top: TRS('nessun avviso recente', 'no recent alerts'),
+        word: TRS('tutto tranquillo', 'all quiet'), msg: TRS("qui ritrovi l'ultimo avviso con un doppio tocco", 'double-tap here to see the last alert again') });
+    }
     else logoClick = now;
   });
   hdrStatus = label(scr, '', 12, C.MUTED); Object.assign(hdrStatus.style, { right: '192px', top: '13px', textAlign: 'right' });
@@ -1450,6 +1456,7 @@ let NT = null;
 function noticeClose() { if (NT) { NT.scrim.remove(); NT = null; } }
 function noticeShow(n, t0) {
   noticeClose();
+  if (!t0 && n.legend !== TRS('avvisi', 'alerts')) G.lastNt = { n, at: realMs() };   // ultimo avviso, per il doppio tocco
   const s = obj(scr, 0, 0, 480, 320, { background: C.BG, zIndex: 49, cursor: 'pointer' });
   NT = { scrim: s, kind: n.kind, col: n.col, hop: n.hop, maxMs: n.maxMs, t0: t0 || realMs() };
   s.addEventListener('click', (ev) => { ev.stopPropagation(); noticeClose(); });
@@ -1961,7 +1968,7 @@ function loop() {
     // torna alla home dopo N minuti senza tocchi (una volta per periodo di inattivita')
     if (P.clock && UI.tv && G.curTile !== 0 && !MO && !NT && !TMENU && !WXW && !PMENU && G.screenMode < 2 && G.homedFor !== G.lastTouch &&
         (r - G.lastTouch) * speed > CLOCK_MIN[P.clock] * 60000) { G.homedFor = G.lastTouch; setTile(0, true); }
-    if (G.pendWin >= 0 && !MO && !G.refreshing && G.screenMode < 2) { showMoment(G.pendWin, G.pendThr); G.pendWin = -1; }
+    if (G.pendWin >= 0 && !MO && !G.refreshing && G.screenMode < 2) { showMoment(G.pendWin, G.pendThr); G.lastMo = { win: G.pendWin, thr: G.pendThr, peak: G.pendPeak, at: realMs() }; G.pendWin = -1; }
     if (MO) momentTick();
     // di notte gli avvisi di Claude Code non compaiono; quelli del timer si' (e riaccendono lo schermo)
     if (G.ntPend === NT_CLAUDE && G.screenMode >= 2 && !G.ntT0) G.ntPend = 0;

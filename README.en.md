@@ -9,7 +9,7 @@ No computer running, no app, no cloud.
 
 [Italiano](README.md) · **English**
 
-<img src="https://img.shields.io/badge/firmware-v3.9.3-D97757?style=for-the-badge" alt="firmware v3.9.3">
+<img src="https://img.shields.io/badge/firmware-v3.9.4-D97757?style=for-the-badge" alt="firmware v3.9.4">
 <img src="https://img.shields.io/badge/ESP32--S3-AXS15231B%20480×320-1B1A18?style=for-the-badge" alt="ESP32-S3 AXS15231B">
 <img src="https://img.shields.io/badge/LVGL-9.2.2-9BC08A?style=for-the-badge" alt="LVGL 9.2.2">
 <img src="https://img.shields.io/badge/accounts-up%20to%204-8E8B82?style=for-the-badge" alt="up to 4 accounts">
@@ -47,7 +47,7 @@ navigation (swipe ← → between pages, no physical button).
 | <img src="assets/screen-night.png" alt="Night clock"> **Night clock** — at night, after 30 seconds without touches, a full-screen clock in warm grey with date, 5-hour and weekly usage and upcoming rain. Dim or very dim; alternatively the screen turns off. | <img src="assets/screen-info.png" alt="Info"> **Info** — firmware version, hardware and credits. |
 | <img src="assets/screen-pause.png" alt="Timed pause"> **Pause requests** — the ❚❚ button in the header stops requests; a long press offers 30 min, 1 hour, until 7:00 or no limit. | <img src="assets/screen-settings.png" alt="Settings"> **Settings** — in five groups: **claude** (interval, accounts, models, token), **alerts** (Claude Code, sounds on pc, reset), **screen** (brightness, night mode and night clock, dimming, home, slideshow), **network and pc** (Wi-Fi, address, pc interval) and **system** (language, timezone, firmware update, info). |
 
-> Double-tap **✻ ritmo-code** at the top to preview every alert in sequence.
+> Double-tap **✻ ritmo-code** at the top to reopen the last alert (Claude, timer, pomodoro or threshold).
 
 The images come from the [simulator](#simulator) and are regenerated with `node tools/capture_screens.js`.
 
