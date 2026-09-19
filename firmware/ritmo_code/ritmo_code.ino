@@ -1955,6 +1955,8 @@ static void boot_splash(const char *sub) {
   spin_row(scr, "ritmo code", 26);
   g_bootSub = mklabel(scr, sub ? sub : "", F12, C_FAINT);
   lv_obj_align(g_bootSub, LV_ALIGN_CENTER, 0, 52);
+  lv_obj_t *ver = mklabel(scr, "v" FW_VERSION, F12, C_FAINT);   // versione in piccolo, in basso
+  lv_obj_align(ver, LV_ALIGN_BOTTOM_MID, 0, -13);
 
   lv_task_handler();
   lv_refr_now(NULL);                       // loop() non gira ancora: forza il disegno

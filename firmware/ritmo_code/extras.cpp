@@ -265,33 +265,30 @@ bool postPcNotify(const char* host, const char* ev, const char* title, const cha
 }
 
 // ---- Aggiornamento del firmware dalle release di GitHub ----
-// Ultima release: tag ("v3.9.3") e indirizzo del file ritmo-code-*.bin
+// Ultima release: tag ("v3.9.3") e indirizzo del file ritmo-code-3.9.3.bin.
+// Niente API JSON (risposta lunga e a pezzi: getString() girava a vuoto e il watchdog riavviava):
+// basta il reindirizzamento di github.com/<repo>/releases/latest -> .../releases/tag/<tag>.
 bool fetchLatestRelease(char* tag, size_t tagSz, char* url, size_t urlSz) {
   tag[0] = 0; url[0] = 0;
   WiFiClientSecure client;
-  client.setCACert(CA_BUNDLE);           // api.github.com: USERTrust ECC
+  client.setCACert(CA_BUNDLE);           // github.com: USERTrust ECC
   HTTPClient http;
-  if (!http.begin(client, "https://api.github.com/repos/" GITHUB_REPO "/releases/latest")) return false;
+  if (!http.begin(client, "https://github.com/" GITHUB_REPO "/releases/latest")) return false;
   http.setTimeout(10000);
-  http.setUserAgent("ritmo-code");        // GitHub rifiuta le richieste senza User-Agent
-  http.addHeader("Accept", "application/vnd.github+json");
+  http.setUserAgent("ritmo-code");
+  http.setFollowRedirects(HTTPC_DISABLE_FOLLOW_REDIRECTS);
+  const char* keys[] = {"Location"};
+  http.collectHeaders(keys, 1);
   int code = http.GET();
-  if (code != 200) { http.end(); Serial.printf("[OTA] release: HTTP %d\n", code); return false; }
-  String s = http.getString();
-  http.end();
-  jstrv(s, "tag_name", tag, tagSz);
-  // primo asset .bin del firmware (lo zip del PC Monitor ha un altro nome)
-  for (int p = s.indexOf("\"browser_download_url\""); p >= 0; p = s.indexOf("\"browser_download_url\"", p + 1)) {
-    char u[200]; jstrv(s, "browser_download_url", u, sizeof(u), p);
-    const char* name = strrchr(u, '/');
-    size_t n = strlen(u);
-    if (name && strncmp(name + 1, "ritmo-code-", 11) == 0 && n > 4 && strcmp(u + n - 4, ".bin") == 0) {
-      strlcpy(url, u, urlSz);
-      break;
-    }
-  }
-  Serial.printf("[OTA] ultima release %s, file %s\n", tag, url[0] ? url : "(nessun .bin)");
-  return tag[0] && url[0];
+  String loc = http.header("Location");
+  http.end();                            // il corpo non serve
+  int t = loc.indexOf("/releases/tag/");
+  if ((code != 301 && code != 302) || t < 0) { Serial.printf("[OTA] release: HTTP %d %s\n", code, loc.c_str()); return false; }
+  strlcpy(tag, loc.substring(t + 14).c_str(), tagSz);
+  const char* ver = tag[0] == 'v' ? tag + 1 : tag;
+  snprintf(url, urlSz, "https://github.com/" GITHUB_REPO "/releases/download/%s/ritmo-code-%s.bin", tag, ver);
+  Serial.printf("[OTA] ultima release %s\n", tag);
+  return true;
 }
 
 // Scarica il .bin (GitHub reindirizza su release-assets.githubusercontent.com) e lo scrive
@@ -324,6 +321,7 @@ bool installFromUrl(const char* url, void (*progress)(int pct), String& err) {
     if (r <= 0) continue;
     if (Update.write(buf, r) != (size_t)r) { err = String("scrittura: ") + Update.errorString(); Update.abort(); http.end(); return false; }
     done += r; idle = millis();
+    vTaskDelay(1);                       // cede il core: niente watchdog durante il download
     int pct = (int)((int64_t)done * 100 / len);
     if (pct != lastPct) { lastPct = pct; if (progress) progress(pct); }
   }
