@@ -4825,7 +4825,12 @@ void setup() {
 
   // Display
   Arduino_DataBus *bus = new Arduino_ESP32QSPI(TFT_CS, TFT_SCK, TFT_SDA0, TFT_SDA1, TFT_SDA2, TFT_SDA3);
-  Arduino_GFX *g = new Arduino_AXS15231B(bus, GFX_NOT_DEFINED, 0, false, 320, 480);
+  // sequenza di inizializzazione del pannello 320x480 di questa scheda (come l'esempio JC3248W535 di
+  // Arduino_GFX). Senza, la libreria usa quella del pannello 180x640: tensioni e VCOM sbagliate e
+  // l'immagine, dopo un po', sbiadiva lasciando i numeri in trasparenza.
+  Arduino_GFX *g = new Arduino_AXS15231B(bus, GFX_NOT_DEFINED, 0, false, 320, 480, 0, 0, 0, 0,
+                                         axs15231b_320480_type1_init_operations,
+                                         sizeof(axs15231b_320480_type1_init_operations));
   g_panel = g;
   gfx = new Arduino_Canvas(320, 480, g, 0, 0, 0);
   if (!gfx->begin(QSPI_FREQ)) { Serial.println("FATAL display"); while (1) delay(1000); }
