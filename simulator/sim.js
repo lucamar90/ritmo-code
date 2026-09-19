@@ -16,7 +16,7 @@ const C = {
   BORDER: '#3A3834', TEXT: '#E8E6DF', MUTED: '#8E8B82', FAINT: '#5C5A55', ACCENT: '#D97757',
   OK: '#9BC08A', WARN: '#E0B25A', BAD: '#E06C5A', BLUE: '#7DB9D6', LILAC: '#B7A6E0',
 };
-const CFG = { PIN_LEN: 4, MAX_PIN_ATTEMPTS: 10, LOCKOUT_BASE_SEC: 60, ACCT_MAX: 4, FW: '3.9.7' };
+const CFG = { PIN_LEN: 4, MAX_PIN_ATTEMPTS: 10, LOCKOUT_BASE_SEC: 60, ACCT_MAX: 4, FW: '3.9.8' };
 const DEMO_PIN = '1234';
 
 const $ = (id) => document.getElementById(id);
@@ -1727,6 +1727,7 @@ function uiSettings() {
     kvRow(lst, TRS('avvisi claude code', 'claude code alerts'), CCL[P.ccal], () => { P.ccal = (P.ccal + 1) % 4; requestState(ST.SETTINGS); });
     const CCC = [5, 10, 30, 0][P.ccclose];
     kvRow(lst, TRS('chiudi avviso claude', 'close claude alert'), CCC ? TRS(`dopo ${CCC} s`, `after ${CCC} s`) : TRS('mai', 'never'), () => { P.ccclose = (P.ccclose + 1) % 4; requestState(ST.SETTINGS); });
+    kvRow(lst, TRS('avviso calendario', 'calendar alert'), (P.calal ?? 1) ? TRS(`${[0, 5, 10, 15][P.calal ?? 1]} min prima`, `${[0, 5, 10, 15][P.calal ?? 1]} min before`) : TRS('spento', 'off'), () => { P.calal = ((P.calal ?? 1) + 1) % 4; requestState(ST.SETTINGS); });
     kvRow(lst, TRS('claude durante il focus', 'claude during focus'), P.ccfocus ? TRS('alla pausa', 'at the break') : TRS('subito', 'right away'), () => { P.ccfocus = !P.ccfocus; requestState(ST.SETTINGS); });
     kvRow(lst, TRS('suoni sul pc', 'sounds on pc'), P.pcsnd ? TRS('acceso', 'on') : TRS('spento', 'off'), () => { P.pcsnd = !P.pcsnd; requestState(ST.SETTINGS); });
     kvRow(lst, TRS('avviso reset', 'reset alert'), P.rstal ? TRS('sopra 80%', 'above 80%') : TRS('spento', 'off'), () => { P.rstal = !P.rstal; requestState(ST.SETTINGS); });

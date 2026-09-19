@@ -234,6 +234,15 @@ bool fetchPcStats(const char* host, PcStats& out) {
   out.ccDur  = (int)jnum(s, "cc_ev_dur", 0, -1);
   out.ccAge  = (int)jnum(s, "cc_ev_age", 0, 9999);
   out.ccBusy = (int)jnum(s, "cc_busy");
+  // calendario: cal_n e, per ogni evento, cal<i>_t (titolo), cal<i>_s / cal<i>_e (epoch)
+  out.calN = (int)jnum(s, "cal_n", 0, -1);
+  if (out.calN > 3) out.calN = 3;
+  for (int i = 0; i < out.calN; i++) {
+    char k[12];
+    snprintf(k, sizeof(k), "cal%d_t", i); jstrv(s, k, out.cal[i].title, sizeof(out.cal[i].title));
+    snprintf(k, sizeof(k), "cal%d_s", i); int ks = jkey(s, k); out.cal[i].s = ks < 0 ? 0 : (uint32_t)s.substring(ks).toInt();
+    snprintf(k, sizeof(k), "cal%d_e", i); int ke = jkey(s, k); out.cal[i].e = ke < 0 ? 0 : (uint32_t)s.substring(ke).toInt();
+  }
   out.ok = true;
   return true;
 }

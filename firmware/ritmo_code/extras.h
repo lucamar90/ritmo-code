@@ -60,6 +60,9 @@ struct PcStats {
   char  ccProj[28];
   int   ccDur, ccAge;      // secondi (ccDur -1 = sconosciuta)
   int   ccBusy;            // sessioni al lavoro
+  // prossimi eventi del calendario (letti dal PC Monitor dal link iCal); calN < 0 = calendario non impostato
+  int   calN;
+  struct { uint32_t s, e; char title[48]; } cal[3];
 };
 
 bool fetchWeather(float lat, float lon, WeatherData& out);

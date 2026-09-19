@@ -9,7 +9,7 @@ Senza computer acceso, senza app, senza cloud.
 
 **Italiano** · [English](README.en.md)
 
-<img src="https://img.shields.io/badge/firmware-v3.9.7-D97757?style=for-the-badge" alt="firmware v3.9.7">
+<img src="https://img.shields.io/badge/firmware-v3.9.8-D97757?style=for-the-badge" alt="firmware v3.9.8">
 <img src="https://img.shields.io/badge/ESP32--S3-AXS15231B%20480×320-1B1A18?style=for-the-badge" alt="ESP32-S3 AXS15231B">
 <img src="https://img.shields.io/badge/LVGL-9.2.2-9BC08A?style=for-the-badge" alt="LVGL 9.2.2">
 <img src="https://img.shields.io/badge/account-fino%20a%204-8E8B82?style=for-the-badge" alt="fino a 4 account">
@@ -78,6 +78,7 @@ nessuna richiesta in più ad Anthropic, e il token non viene mai esposto.
 - **Storico settimanale**: picco di ogni settimana, salvato sul dispositivo per account.
 - **Avvisi** di soglia (25/50/70/100%) e di **reset** (disattivabile).
 - **Timer e pomodoro**: tocca l'ora o la riga con il pomodoro nella home. Tre impostazioni pronte, **25/5**, **50/10** e **15/3** (focus/pausa in minuti, pausa lunga dopo il quarto), oppure timer da 5, 10, 15 o 30 minuti. Il conto alla rovescia scorre sotto l'ora e nella testata, a fine fase Clawd lo annuncia a schermo intero (anche di notte) e i pomodori di oggi restano contati. Si comanda anche dal PC (menu dell'icona) e, con *Impostazioni → avvisi → claude durante il focus → alla pausa*, gli avvisi di Claude aspettano la fine del focus.
+- **Calendario**: incolla il link segreto iCal di Google Calendar (o Outlook) nel pannello web, pagina `/home`. Il PC Monitor scarica gli eventi ogni 5 minuti (anche quelli ricorrenti); sotto l'ora compare "tra 12 min: call cliente" o "in corso: … fino 16:00", e 5, 10 o 15 minuti prima arriva un avviso a schermo intero con suono sul PC (*Impostazioni → avvisi → avviso calendario*). Il link lo legge solo il PC collegato.
 - **Avvisi di Claude Code**: Clawd ti dice quando Claude ha finito un lavoro (con la durata) o aspetta un permesso, tramite gli hook e l'app [PC Monitor](#ritmo-code-pc-monitor). Mentre Claude lavora la ✻ in testata gira come in Claude Code e il riquadro della home dice quante sessioni sono **al lavoro**.
 - **Modelli**: una sonda per ciclo a rotazione. Gli **ID sono modificabili** dal dispositivo o dal browser: se Anthropic rinomina un modello non serve ricompilare.
 - **Modalità notte** in una fascia oraria (22, 23 o 00 → 07): **orologio a tutto schermo** con luminosità tenue o molto tenue, oppure schermo spento, e di predefinito **aggiornamenti in pausa**. Il primo tocco riaccende soltanto, senza premere nulla. **Attenuazione** dopo 1, 5 o 10 minuti senza tocchi.

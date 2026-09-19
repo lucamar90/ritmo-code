@@ -430,6 +430,15 @@ static void moment_tick();
 static void moment_close();
 static void cc_event(long id, const char *ev, const char *proj, int dur, int age);
 static int g_setGroup = 0;
+// calendario: link iCal (NVS "ical", segreto: lo legge solo il PC collegato) e prossimi eventi dal PC Monitor
+static char g_ical[256] = "";
+struct CalEv { uint32_t s, e; char title[48]; };
+static CalEv g_cal[3];
+static int g_calN = 0;
+static int g_calAlIdx = 1;                   // avviso calendario: 0 spento, 1/2/3 = 5/10/15 min prima (NVS "calal")
+static const uint8_t CAL_AL_MIN[4] = {0, 5, 10, 15};
+static uint32_t g_calAlerted = 0;            // inizio dell'ultimo evento gia' avvisato
+static CalEv g_calNotice;                    // evento dell'avviso a schermo
 static bool g_ccFocusDefer = false;          // avvisi di Claude durante il focus: rimandati alla pausa (NVS "ccfocus")
 static bool g_ccDeferred = false;            // un avviso di Claude aspetta la fine del focus
 static bool tm_action(int opt);               // comandi del timer (menu del dispositivo e PC)
@@ -886,6 +895,9 @@ static void load_persisted() {
   g_pomoDay = g_prefs.getLong("pomday", 0);
   g_pcSound = g_prefs.getBool("pcsnd", true);
   g_ccFocusDefer = g_prefs.getBool("ccfocus", false);
+  strlcpy(g_ical, g_prefs.getString("ical", "").c_str(), sizeof(g_ical));
+  g_calAlIdx = g_prefs.getInt("calal", 1);
+  if (g_calAlIdx < 0 || g_calAlIdx > 3) g_calAlIdx = 1;
   g_ccCloseIdx = g_prefs.getInt("ccclose", 2);
   if (g_ccCloseIdx < 0 || g_ccCloseIdx > 3) g_ccCloseIdx = 2;
   g_ccAlert = g_prefs.getInt("ccal", 2);
@@ -1820,7 +1832,14 @@ static String home_page(const String &msg, bool ok) {
   h += F("'><label for=kwh>Prezzo dell'energia (euro per kWh, per il costo del PC)</label>"
          "<input id=kwh name=kwh inputmode=decimal maxlength=6 autocomplete=off value='");
   snprintf(num, sizeof(num), "%.3f", g_kwhPrice); h += num;
-  h += F("'><label for=pin>PIN del dispositivo</label>"
+  h += F("'><label for=ical>Calendario: indirizzo segreto in formato iCal (Google Calendar: Impostazioni del calendario &rarr; "
+         "Integra il calendario &rarr; Indirizzo segreto in formato iCal)</label>"
+         "<input id=ical name=ical maxlength=250 autocomplete=off placeholder='");
+  h += g_ical[0] ? F("impostato: lascia vuoto per non cambiarlo") : F("https://calendar.google.com/calendar/ical/.../basic.ics");
+  h += F("'>");
+  if (g_ical[0]) h += F("<label><input type=checkbox name=icaldel value=1 style='width:auto;margin-right:6px'>rimuovi il calendario</label>");
+  h += F("<p style='font-size:12px;color:var(--mut)'>Il link lo legge solo il PC collegato (Ritmo Code PC Monitor), che scarica gli eventi ogni 5 minuti.</p>");
+  h += F("<label for=pin>PIN del dispositivo</label>"
          "<input id=pin name=pin type=password inputmode=numeric maxlength=4 autocomplete=off>"
          "<button type=submit>Salva</button></form><p><a href='/'>&larr; pannello</a></p>"
          "<script>var R=[];s.onclick=function(){fetch('https://geocoding-api.open-meteo.com/v1/search?count=5&language=it&name='+encodeURIComponent(q.value))"
@@ -1879,6 +1898,19 @@ static void handleClaudeEvent() {
   cc_event(g_web->arg("id").toInt(), ev.c_str(), pj, g_web->hasArg("dur") ? g_web->arg("dur").toInt() : -1, 0);
   g_web->send(204, "text/plain", "");
 }
+// link iCal per il PC Monitor: solo al PC collegato (il link e' segreto)
+static void handleIcalGet() {
+  String host = g_pcHost;
+  int c = host.indexOf(':');
+  if (c >= 0) host.remove(c);
+  IPAddress pc;
+  if (!g_pcHost[0] || (pc.fromString(host) && g_web->client().remoteIP() != pc)) {
+    g_web->send(403, "application/json", "{\"ok\":false}");
+    return;
+  }
+  String j = String("{\"url\":\"") + g_ical + "\"}";
+  g_web->send(200, "application/json", j);
+}
 // timer e pomodoro dal PC (menu dell'icona di Ritmo Code PC Monitor): solo dal PC collegato
 static void handleTimerCmd() {
   String host = g_pcHost;
@@ -1933,6 +1965,18 @@ static void handleHomePost() {
     float price = k.toFloat();
     if (price >= 0 && price < 5) { g_kwhPrice = price; g_prefs.putFloat("kwh", g_kwhPrice); }
   }
+  if (g_web->hasArg("icaldel")) { g_ical[0] = 0; g_prefs.putString("ical", ""); g_calN = 0; }
+  else if (g_web->hasArg("ical")) {
+    String ic = g_web->arg("ical"); ic.trim();
+    if (ic.length()) {
+      if (!ic.startsWith("https://") || ic.length() >= sizeof(g_ical) || ic.indexOf('"') >= 0 || ic.indexOf('<') >= 0) {
+        g_web->send(200, "text/html; charset=utf-8", home_page("Link del calendario non valido: deve iniziare con https://", false));
+        return;
+      }
+      strlcpy(g_ical, ic.c_str(), sizeof(g_ical));
+      g_prefs.putString("ical", g_ical);
+    }
+  }
   g_wx.ok = false; g_wxTryMs = 0;                   // nuovo meteo al prossimo giro
   g_pc.ok = false; g_pcAtMs = 0;
   Serial.printf("[HOME] citta' %s (%.4f, %.4f), pc %s\n", g_wxCity, g_wxLat, g_wxLon, g_pcHost);
@@ -1954,6 +1998,7 @@ static void start_data_web() {
   g_web->on("/pcpair", HTTP_POST, handlePcPair);
   g_web->on("/claude", HTTP_POST, handleClaudeEvent);
   g_web->on("/timer", HTTP_POST, handleTimerCmd);
+  g_web->on("/api/ical", HTTP_GET, handleIcalGet);
   g_web->on("/update", HTTP_GET, handleUpdateGet);
   g_web->on("/update", HTTP_POST, handleUpdatePost, handleUpdateUpload);
   g_web->onNotFound([]() { g_web->send(404, "application/json", "{\"error\":\"not_found\"}"); });
@@ -3080,15 +3125,26 @@ static void home_tick() {
   for (char *q = city; *q; q++) if (*q >= 'A' && *q <= 'Z') *q += 32;
   if (g_lang) snprintf(s, sizeof(s), "%s %d %s " U_MIDDOT " %s", GEN[tv.tm_wday], tv.tm_mday, MEN[tv.tm_mon], city);
   else        snprintf(s, sizeof(s), "%s %d %s " U_MIDDOT " %s", GIT[tv.tm_wday], tv.tm_mday, MIT[tv.tm_mon], city);
+  uint32_t calCol = C_MUTED;
   if (g_tmMode) {                                  // timer in corso: sotto l'ora, conto alla rovescia e fine
     char hm[12], ph[32];
     int32_t left = (int32_t)(g_tmEndMs - millis());
     fmt_hm((uint32_t)now + (left > 0 ? (left + 999) / 1000 : 0), hm, sizeof(hm));
     tm_label(ph, sizeof(ph));
     snprintf(s, sizeof(s), TRS("%s " U_MIDDOT " fine %s", "%s " U_MIDDOT " ends %s"), ph, hm);
+  } else {
+    int ci = cal_next((uint32_t)now);
+    if (ci >= 0 && g_cal[ci].s <= (uint32_t)now) {            // in corso
+      char hm[12]; fmt_hm(g_cal[ci].e, hm, sizeof(hm));
+      snprintf(s, sizeof(s), TRS("in corso: %s " U_MIDDOT " fino %s", "now: %s " U_MIDDOT " until %s"), g_cal[ci].title, hm);
+      calCol = C_OK;
+    } else if (ci >= 0 && g_cal[ci].s - (uint32_t)now <= 3600) {   // entro un'ora
+      snprintf(s, sizeof(s), TRS("tra %u min: %s", "in %u min: %s"), (unsigned)((g_cal[ci].s - (uint32_t)now + 59) / 60), g_cal[ci].title);
+      calCol = C_BLUE;
+    }
   }
   label_set(g_ui.hmDate, s);
-  label_color(g_ui.hmDate, g_tmMode ? tm_color() : C_MUTED);
+  label_color(g_ui.hmDate, g_tmMode ? tm_color() : calCol);
   // descrizione meteo di oggi (la colonna tiene 21 caratteri; domani e' nelle previsioni della settimana)
   if (g_wx.ok) {
     snprintf(s, sizeof(s), "%s %.0f/%.0f\xC2\xB0", wx_desc(g_wx.code), g_wx.tmax, g_wx.tmin);
@@ -3782,7 +3838,7 @@ static void moment_tick() {
 // Avviso a schermo intero con Clawd: Claude Code, timer e pomodoro.
 // Resta finche' non lo tocchi (o scade), sopravvive ai rebuild del dashboard.
 // ============================================================
-enum { NT_NONE = 0, NT_CLAUDE, NT_TIMER };
+enum { NT_NONE = 0, NT_CLAUDE, NT_TIMER, NT_CAL };
 struct NoticeUI { lv_obj_t *scrim, *box, *frame, *ask; uint32_t t0, col, maxMs; int kind; bool hop, idle; };
 static NoticeUI g_nt = {};
 static int g_ntPend = NT_NONE;                 // avviso da mostrare appena si puo'
@@ -3973,6 +4029,40 @@ static void cc_show() {
     snprintf(n.foot, sizeof(n.foot), done ? TRS("alle %s", "at %s") : TRS("dalle %s", "since %s"), hm);
   }
   notice_show(n);
+}
+
+// ---- Calendario: prossimo evento e avviso qualche minuto prima ----
+// primo evento non ancora finito (i piu' vicini arrivano gia' ordinati dal PC); -1 = nessuno
+static int cal_next(uint32_t now) {
+  for (int i = 0; i < g_calN; i++) if (g_cal[i].e > now) return i;
+  return -1;
+}
+static void cal_show() {
+  NoticeText n = {};
+  n.kind = NT_CAL; n.col = C_BLUE; n.hop = false; n.maxMs = 10UL * 60UL * 1000UL;
+  strcpy(n.ev, "cal");
+  strlcpy(n.legend, TRS("calendario", "calendar"), sizeof(n.legend));
+  time_t now = time(nullptr);
+  int32_t m = ((int32_t)g_calNotice.s - (int32_t)now + 59) / 60;
+  if (m > 0) { strlcpy(n.top, TRS("tra poco", "coming up"), sizeof(n.top)); n.big = m; strcpy(n.unit, " min"); }
+  else       { strlcpy(n.top, TRS("inizia adesso", "starting now"), sizeof(n.top)); n.big = -1; strlcpy(n.word, TRS("adesso", "now"), sizeof(n.word)); }
+  strlcpy(n.msg, g_calNotice.title, sizeof(n.msg));
+  char a[12], z[12]; fmt_hm(g_calNotice.s, a, sizeof(a)); fmt_hm(g_calNotice.e, z, sizeof(z));
+  snprintf(n.foot, sizeof(n.foot), "%s - %s", a, z);
+  notice_show(n);
+}
+// ogni secondo: avviso N minuti prima dell'inizio (una volta per evento)
+static void cal_tick() {
+  if (!g_calAlIdx || !g_calN) return;
+  time_t now = time(nullptr);
+  if (now < 1000000000L) return;
+  int i = cal_next((uint32_t)now);
+  if (i < 0 || g_cal[i].s == g_calAlerted || g_cal[i].s <= (uint32_t)now) return;
+  if (g_cal[i].s - (uint32_t)now > (uint32_t)CAL_AL_MIN[g_calAlIdx] * 60) return;
+  g_calAlerted = g_cal[i].s;
+  g_calNotice = g_cal[i];
+  g_ntPend = NT_CAL; g_ntT0 = 0;
+  Serial.printf("[CAL] avviso: %s\n", g_cal[i].title);
 }
 
 // ---- Timer e pomodoro (tocca l'ora nella home) ----
@@ -4729,6 +4819,11 @@ static void settings_action_cb(lv_event_t *e) {
         request_state(ST_SETTINGS);
       }
       break;
+    case 28:                                           // avviso calendario: 5 -> 10 -> 15 min prima -> spento
+      g_calAlIdx = (g_calAlIdx + 1) % 4;
+      g_prefs.putInt("calal", g_calAlIdx);
+      request_state(ST_SETTINGS);
+      break;
     case 27:                                           // claude durante il focus: subito / alla pausa
       g_ccFocusDefer = !g_ccFocusDefer;
       g_prefs.putBool("ccfocus", g_ccFocusDefer);
@@ -4822,6 +4917,13 @@ static void ui_settings() {
       kv_row(lst, TRS("chiudi avviso claude", "close claude alert"), ccc, C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)25);
       kv_row(lst, TRS("claude durante il focus", "claude during focus"), g_ccFocusDefer ? TRS("alla pausa", "at the break") : TRS("subito", "right away"),
              C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)27);
+      {
+        char ca[24];
+        if (!g_ical[0]) strcpy(ca, TRS("link da /home", "link from /home"));
+        else if (g_calAlIdx) snprintf(ca, sizeof(ca), TRS("%d min prima", "%d min before"), CAL_AL_MIN[g_calAlIdx]);
+        else strcpy(ca, TRS("spento", "off"));
+        kv_row(lst, TRS("avviso calendario", "calendar alert"), ca, C_TEXT, g_ical[0] ? C_ACCENT : C_MUTED, settings_action_cb, (void *)(intptr_t)28);
+      }
       kv_row(lst, TRS("suoni sul pc", "sounds on pc"), g_pcSound ? TRS("acceso", "on") : TRS("spento", "off"),
              C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)24);
       kv_row(lst, TRS("avviso reset", "reset alert"), g_resetAlert ? TRS("sopra 80%", "above 80%") : TRS("spento", "off"),
@@ -5737,6 +5839,10 @@ void loop() {
       g_pcAtMs = millis();
       if (g_pc.ccId) cc_event(g_pc.ccId, g_pc.ccEv, g_pc.ccProj, g_pc.ccDur, g_pc.ccAge);
       if (g_pc.ccBusy != g_ccBusyN) { g_ccBusyN = g_pc.ccBusy; cc_busy_ui(); }
+      if (g_pc.calN >= 0) {
+        g_calN = g_pc.calN;
+        for (int i = 0; i < g_calN; i++) { g_cal[i].s = g_pc.cal[i].s; g_cal[i].e = g_pc.cal[i].e; strlcpy(g_cal[i].title, g_pc.cal[i].title, sizeof(g_cal[i].title)); }
+      }
     }
     if (g_pc.ok) {                                   // il grafico avanza a ogni lettura
       g_pcHistAtMs = millis();
@@ -5771,6 +5877,7 @@ void loop() {
     static bool blinkClosed = false;
     if (now - lastTick > 1000) {
       lastTick = now; dash_tick(); home_tick(); if (g_tmMode) set_hdr_status();
+      cal_tick();
       if (g_shadeTm) { char tt[12]; shade_timer_text(tt, sizeof(tt)); label_set(g_shadeTm, tt); }
       if (g_ccBusyN && (!g_pcAtMs || now - g_pcAtMs > pc_stale_ms())) { g_ccBusyN = 0; cc_busy_ui(); }
     }
@@ -5892,7 +5999,7 @@ void loop() {
       int k = g_ntPend;
       g_ntPend = NT_NONE;
       if (!g_ntT0) g_lastTouchMs = millis();
-      if (k == NT_CLAUDE) cc_show(); else tm_show();
+      if (k == NT_CLAUDE) cc_show(); else if (k == NT_CAL) cal_show(); else tm_show();
     }
     if (g_nt.scrim) notice_tick();
   }

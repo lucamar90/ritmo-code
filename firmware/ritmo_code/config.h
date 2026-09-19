@@ -7,7 +7,7 @@
 // ============================================================
 
 // ── Firmware ─────────────────────────────────────────────
-#define FW_VERSION              "3.9.7"
+#define FW_VERSION              "3.9.8"
 #define GITHUB_REPO             "lucamar90/ritmo-code"   // aggiornamenti: ultima release di GitHub
 
 // ── Display QSPI (AXS15231B) ─────────────────────────────

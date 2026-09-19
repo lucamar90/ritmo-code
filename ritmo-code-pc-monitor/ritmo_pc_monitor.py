@@ -28,7 +28,7 @@ import winreg
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP = "ritmo-code-pc-monitor"
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 DEFAULT_PORT = 8765
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "RitmoCodePcMonitor")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
@@ -610,12 +610,14 @@ SOUNDS = {
     "ask":   [(659, 0.2), (0, 0.06), (659, 0.3)],
     "thr":   [(440, 0.18), (0, 0.06), (440, 0.3)],               # soglia di utilizzo
     "reset": [(523, 0.15), (784, 0.4)],                          # finestra di nuovo disponibile
+    "cal":   [(784, 0.15), (988, 0.15), (1175, 0.4)],            # evento del calendario tra poco
 }
 # suoni di Windows (MessageBeep): seguono il volume dei Suoni di sistema e arrivano anche nelle
 # sessioni remote, dove le melodie qui sopra (PlaySound) possono restare mute
 BEEPS = {"break": 0x40, "cycle": 0x40, "reset": 0x40,        # asterisco
          "timer": 0x30, "perm": 0x30, "ask": 0x30,           # esclamazione
          "thr": 0x10,                                        # errore critico
+         "cal": 0x30,                                        # esclamazione
          "focus": 0x0, "done": 0x0}                          # predefinito
 DEFAULT_NOTIFY = {"sound": True, "toast": True, "volume": 60, "style": "windows"}
 _sound_lock = threading.Lock()
@@ -708,6 +710,10 @@ code{color:var(--ac)}
  <div class=form><button id=hkon>Attiva gli avvisi</button><button id=hkoff>Disattiva</button></div>
  <p class=k style="margin:10px 0 0">Aggiunge tre hook a <code>~/.claude/settings.json</code> (il resto del file non cambia): il dispositivo
  mostra quando Claude ha finito o aspetta un permesso. Valgono per le sessioni di Claude Code aperte da ora in poi.</p></div>
+<div class=box><span class=lg>calendario</span><div id=cal class=k>...</div>
+ <div class=form><button id=calr>Aggiorna ora</button></div>
+ <p class=k style="margin:10px 0 0">Il link iCal si imposta nel pannello del dispositivo (pagina <code>/home</code>); questo PC scarica
+ gli eventi ogni 5 minuti e passa al dispositivo i prossimi 3.</p></div>
 <div class=box><span class=lg>suoni e notifiche</span>
  <div class=form><label><input type=checkbox id=snd> suono</label><label><input type=checkbox id=tst> notifica di Windows</label>
  <select id=sty><option value=windows>suoni di Windows</option><option value=ritmo>melodie Ritmo Code</option></select>
@@ -746,6 +752,11 @@ function nset(extra){var b={sound:$('snd').checked,toast:$('tst').checked,volume
  fetch('/api/notify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}).then(function(r){return r.json()}).then(ns)}
 $('snd').onchange=$('tst').onchange=$('vol').onchange=$('sty').onchange=function(){nset()};$('try').onclick=function(){nset({test:true})};
 fetch('/api/notify').then(function(r){return r.json()}).then(ns);
+function cal(){fetch('/api/calendar').then(function(r){return r.json()}).then(function(j){
+ var n=j.next?' &middot; prossimo: <b>'+j.next.title+'</b> alle '+new Date(j.next.start*1000).toTimeString().slice(0,5):'';
+ $('cal').innerHTML=j.state+n})}
+$('calr').onclick=function(){fetch('/api/calendar',{method:'POST'}).then(function(){setTimeout(cal,3000)})};
+cal();setInterval(cal,15000);
 pc();setInterval(pc,2000);scan();hks();setInterval(hks,5000);
 </script></body></html>"""
 
@@ -774,10 +785,11 @@ def make_handler(sampler, lhm, port):
                     DEVICE_SEEN.update(ip=self.client_address[0], at=time.time())
                 data = sampler.snapshot()
                 data.update(CLAUDE.fields())
+                data.update(CAL.fields())
                 if data.get("claude_sessions", -1) >= 0:          # mai piu' sessioni al lavoro di quelle aperte
                     data["cc_busy"] = min(data["cc_busy"], data["claude_sessions"])
                 data.update({"app": APP, "version": VERSION})
-                self._send(200, "application/json", json.dumps(data))
+                self._send(200, "application/json", json.dumps(data, ensure_ascii=False))   # titoli con accenti
             elif path == "/" and self._local():
                 lhm_state = "disattivato" if lhm is None else ("connesso" if lhm.online else "non raggiungibile")
                 page = (STATUS_PAGE.replace("__VERSION__", VERSION)
@@ -790,6 +802,8 @@ def make_handler(sampler, lhm, port):
                     cfg["device"] = devices[0]["ip"]
                     save_config(cfg)
                 self._send(200, "application/json", json.dumps(devices))
+            elif path == "/api/calendar" and self._local():
+                self._send(200, "application/json", json.dumps(CAL.status()))
             elif path == "/api/notify" and self._local():
                 self._send(200, "application/json", json.dumps(notify_settings()))
             elif path == "/api/hooks" and self._local():
@@ -830,6 +844,10 @@ def make_handler(sampler, lhm, port):
                 return
             if not self._local():
                 self._send(404, "text/plain", "not found")
+                return
+            if path == "/api/calendar":
+                CAL.refresh()
+                self._send(200, "application/json", json.dumps({"ok": True}))
                 return
             if path == "/api/notify":
                 try:
@@ -962,6 +980,215 @@ def timer_command(ip, action, params):
         return {"ok": False, "error": "comando non valido adesso" if error.code == 409 else f"HTTP {error.code}"}
     except Exception:
         return {"ok": False, "error": "dispositivo non raggiungibile"}
+
+
+# ---------------------------------------------------------------------------
+# Calendario: prossimi eventi dal link iCal impostato nel pannello del dispositivo
+# ---------------------------------------------------------------------------
+
+def _ics_lines(text):
+    """Righe logiche di un file iCal (le righe che iniziano con spazio continuano la precedente)."""
+    out = []
+    for raw in text.replace("\r\n", "\n").split("\n"):
+        if raw[:1] in (" ", "\t") and out:
+            out[-1] += raw[1:]
+        elif raw:
+            out.append(raw)
+    return out
+
+
+def _ics_prop(line):
+    """'DTSTART;TZID=Europe/Rome:20260919T140000' -> ('DTSTART', {'TZID': 'Europe/Rome'}, '20260919T140000')"""
+    head, _, value = line.partition(":")
+    parts = head.split(";")
+    params = {}
+    for p in parts[1:]:
+        k, _, v = p.partition("=")
+        params[k.upper()] = v
+    return parts[0].upper(), params, value
+
+
+def _ics_time(value, params):
+    """(epoch, tutto il giorno). Ora UTC con Z; altrimenti ora locale del PC (TZID del calendario = fuso del PC)."""
+    import calendar
+    import datetime as dt
+    v = value.strip()
+    if params.get("VALUE") == "DATE" or len(v) == 8:
+        d = dt.datetime.strptime(v[:8], "%Y%m%d")
+        return time.mktime(d.timetuple()), True
+    d = dt.datetime.strptime(v[:15], "%Y%m%dT%H%M%S")
+    if v.endswith("Z"):
+        return calendar.timegm(d.timetuple()), False
+    return time.mktime(d.timetuple()), False
+
+
+def _ics_duration(v):
+    m = re.fullmatch(r"([+-])?P(?:(\d+)W)?(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?", v.strip())
+    if not m:
+        return 0
+    w, d, h, mi, s = (int(x or 0) for x in m.groups()[1:])
+    return (((w * 7 + d) * 24 + h) * 60 + mi) * 60 + s
+
+
+def _ics_occurrences(start, rule, exdates, until_limit):
+    """Inizi delle ripetizioni fino a until_limit: FREQ DAILY/WEEKLY(BYDAY)/MONTHLY/YEARLY, INTERVAL, COUNT, UNTIL."""
+    import datetime as dt
+    r = dict(p.partition("=")[::2] for p in rule.split(";") if "=" in p)
+    freq, step = r.get("FREQ", ""), max(1, int(r.get("INTERVAL", "1") or 1))
+    count = int(r["COUNT"]) if r.get("COUNT", "").isdigit() else None
+    until = _ics_time(r["UNTIL"], {})[0] if r.get("UNTIL") else None
+    days = {"MO": 0, "TU": 1, "WE": 2, "TH": 3, "FR": 4, "SA": 5, "SU": 6}
+    byday = sorted(days[d[-2:]] for d in r.get("BYDAY", "").split(",") if d[-2:] in days)
+    base = dt.datetime.fromtimestamp(start)
+    out, n, i = [], 0, 0
+    while i < 3000:
+        if freq == "DAILY":
+            cands = [base + dt.timedelta(days=i * step)]
+        elif freq == "WEEKLY":
+            week = base - dt.timedelta(days=base.weekday()) + dt.timedelta(weeks=i * step)
+            cands = [week + dt.timedelta(days=d) for d in (byday or [base.weekday()])]
+            cands = [c for c in cands if c >= base]
+        elif freq == "MONTHLY":
+            mo = base.month - 1 + i * step
+            try:
+                cands = [base.replace(year=base.year + mo // 12, month=mo % 12 + 1)]
+            except ValueError:                    # 31 in un mese piu' corto: saltato, come fa Google
+                cands = []
+        elif freq == "YEARLY":
+            try:
+                cands = [base.replace(year=base.year + i * step)]
+            except ValueError:
+                cands = []
+        else:
+            return [start]
+        i += 1
+        for c in cands:
+            t = time.mktime(c.timetuple())
+            if (until is not None and t > until) or t > until_limit:
+                return out
+            n += 1
+            if int(t) not in exdates:
+                out.append(t)
+            if count is not None and n >= count:
+                return out
+    return out
+
+
+def ics_upcoming(text, now, horizon_days=7, limit=3):
+    """Prossimi eventi (inizio, fine, titolo) non ancora finiti, senza quelli di tutto il giorno e quelli annullati."""
+    events, overrides = [], {}
+    cur = None
+    for line in _ics_lines(text):
+        if line == "BEGIN:VEVENT":
+            cur = {"exdate": set()}
+        elif line == "END:VEVENT" and cur is not None:
+            events.append(cur)
+            cur = None
+        elif cur is not None:
+            name, params, value = _ics_prop(line)
+            if name in ("DTSTART", "DTEND", "RECURRENCE-ID"):
+                cur[name] = _ics_time(value, params)
+            elif name == "EXDATE":
+                for v in value.split(","):
+                    cur["exdate"].add(int(_ics_time(v, params)[0]))
+            elif name in ("SUMMARY", "RRULE", "UID", "STATUS", "DURATION"):
+                cur[name] = value
+    end_limit = now + horizon_days * 86400
+    found = []
+    for e in events:
+        if "DTSTART" not in e or e.get("STATUS", "").upper() == "CANCELLED":
+            if "RECURRENCE-ID" in e:                       # un'occorrenza annullata
+                overrides[(e.get("UID"), int(e["RECURRENCE-ID"][0]))] = None
+            continue
+        start, allday = e["DTSTART"]
+        if allday:
+            continue
+        dur = e["DTEND"][0] - start if "DTEND" in e else _ics_duration(e.get("DURATION", "PT1H"))
+        title = e.get("SUMMARY", "").replace("\\,", ",").replace("\\;", ";").replace("\\n", " ").replace("\\", "")
+        if "RECURRENCE-ID" in e:                           # occorrenza spostata di un evento ricorrente
+            overrides[(e.get("UID"), int(e["RECURRENCE-ID"][0]))] = (start, start + dur, title)
+            continue
+        starts = _ics_occurrences(start, e["RRULE"], e["exdate"], end_limit) if "RRULE" in e else [start]
+        for s in starts:
+            found.append((e.get("UID"), int(s), (s, s + dur, title)))
+    result = []
+    for uid, key, ev in found:
+        if (uid, key) in overrides:
+            continue                                       # sostituita (o annullata) da un'eccezione
+        result.append(ev)
+    result += [ev for ev in overrides.values() if ev]
+    result = [ev for ev in result if ev[1] > now and ev[0] < end_limit]
+    result.sort()
+    return result[:limit]
+
+
+def _cal_title(t):
+    """Titolo leggibile dal dispositivo: niente virgolette/escape, solo caratteri del suo font (Latin-1)."""
+    t = t.replace('"', "'").replace("\\", "/")
+    t = "".join(ch for ch in t if ch >= " " and ord(ch) <= 0xFF)
+    return t.strip()[:44] or "(senza titolo)"
+
+
+class Calendar(threading.Thread):
+    """Ogni 5 minuti: link dal dispositivo, file iCal, prossimi 3 eventi per data.json."""
+
+    INTERVAL = 300
+
+    def __init__(self):
+        super().__init__(daemon=True)
+        self.lock = threading.Lock()
+        self.events, self.state, self.at = None, "in attesa del dispositivo", 0
+        self.wake = threading.Event()
+
+    def refresh(self):
+        self.wake.set()
+
+    def run(self):
+        while True:
+            self._update()
+            self.wake.wait(self.INTERVAL)
+            self.wake.clear()
+
+    def _update(self):
+        ip = device_ip()
+        if not ip:
+            return self._set(None, "nessun dispositivo collegato")
+        try:
+            url = get_json(f"http://{ip}/api/ical", 3).get("url", "")
+        except Exception:
+            return self._set(self.events, "dispositivo non raggiungibile (eventi precedenti mantenuti)")
+        if not url:
+            return self._set(None, "nessun link: impostalo nel pannello del dispositivo, pagina /home")
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "ritmo-code-pc-monitor"})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                text = r.read(8 * 1024 * 1024).decode("utf-8", "replace")
+            events = ics_upcoming(text, time.time())
+            self._set(events, f"{len(events)} eventi nei prossimi 7 giorni")
+        except Exception as error:
+            self._set(self.events, f"download non riuscito: {error}")
+
+    def _set(self, events, state):
+        with self.lock:
+            self.events, self.state, self.at = events, state, time.time()
+
+    def fields(self):
+        with self.lock:
+            if self.events is None:
+                return {}
+            data = {"cal_n": len(self.events)}
+            for i, (s, e, t) in enumerate(self.events):
+                data.update({f"cal{i}_t": _cal_title(t), f"cal{i}_s": int(s), f"cal{i}_e": int(e)})
+            return data
+
+    def status(self):
+        with self.lock:
+            nxt = self.events[0] if self.events else None
+            return {"state": self.state, "at": int(self.at),
+                    "next": {"title": nxt[2], "start": int(nxt[0])} if nxt else None}
+
+
+CAL = Calendar()
 
 
 class TrayIcon:
@@ -1190,6 +1417,7 @@ def main():
         else:
             ctypes.windll.user32.MessageBoxW(None, message, "Ritmo Code PC Monitor", 0x10)
         sys.exit(1)
+    CAL.start()                         # calendario: link dal dispositivo, eventi ogni 5 minuti
     if args.no_tray:
         server.serve_forever()
         return
