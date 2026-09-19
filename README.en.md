@@ -9,7 +9,7 @@ No computer running, no app, no cloud.
 
 [Italiano](README.md) · **English**
 
-<img src="https://img.shields.io/badge/firmware-v3.7-D97757?style=for-the-badge" alt="firmware v3.7">
+<img src="https://img.shields.io/badge/firmware-v3.8-D97757?style=for-the-badge" alt="firmware v3.8">
 <img src="https://img.shields.io/badge/ESP32--S3-AXS15231B%20480×320-1B1A18?style=for-the-badge" alt="ESP32-S3 AXS15231B">
 <img src="https://img.shields.io/badge/LVGL-9.2.2-9BC08A?style=for-the-badge" alt="LVGL 9.2.2">
 <img src="https://img.shields.io/badge/accounts-up%20to%204-8E8B82?style=for-the-badge" alt="up to 4 accounts">
@@ -85,7 +85,7 @@ Anthropic, and the token is never exposed.
 - **Models**: one probe per cycle, rotating. **Model IDs are editable** on the device or in the browser, so a renamed model needs no rebuild.
 - **Night mode** during a time band (22, 23 or 00 → 07): a **full-screen clock**, dim or very dim, or the screen off, and by default **updates paused**. The first tap only wakes the screen, without pressing anything. **Dimming** after 1, 5 or 10 minutes without touches.
 - **Pause requests** from the header button, indefinitely or for a set time; resumes by itself.
-- **Home and weather**: clock, date and forecast for your city (Open-Meteo, free and keyless), refreshed every 30 minutes.
+- **Home and weather**: clock, date and forecast for your city (Open-Meteo, free and keyless), refreshed every 30 minutes. Tap the weather for the **7-day forecast**.
 - **PC statistics** through the [Ritmo Code PC Monitor](#ritmo-code-pc-monitor) app, read every 1, 3, 5 seconds or 1 minute.
 - **Up to 4 accounts**, encrypted under the same PIN; only the active one is polled.
 - **Saved Wi-Fi networks**: up to 3, with a preferred network and "forget"; signal strength in dBm under Settings.
