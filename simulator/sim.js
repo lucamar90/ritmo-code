@@ -1248,6 +1248,7 @@ function setHdrStatus() {
 }
 let logoClick = 0, demoIdx = 0;
 function uiMain() {
+  G.setGroup = 0;   // impostazioni: si riparte dalla pagina principale
   masc.length = 0;
   UI.hdrId = label(scr, '', 13, C.TEXT, 13, 13);
   // doppio tocco su "✻ ritmo-code" = demo dei momenti
@@ -1569,9 +1570,21 @@ function uniqueLabel(lbl, slot) {
   }
   return lbl;
 }
+// impostazioni a gruppi (come sul dispositivo): pagina principale con le voci, una pagina per gruppo
+const SG_TITLES = [['impostazioni', 'settings'], ['claude', 'claude'], ['avvisi', 'alerts'], ['schermo', 'screen'], ['rete e pc', 'network and pc'], ['sistema', 'system']];
 function uiSettings() {
   G.wipeArmed = false;
-  thead(TRS('impostazioni', 'settings'), G.usage.ok ? ST.MAIN : ST.SETTINGS);
+  const g = G.setGroup || 0;
+  const gt = (i) => TRS(SG_TITLES[i][0], SG_TITLES[i][1]);
+  const goGroup = (i) => { G.setGroup = i; G.setScroll = 0; requestState(ST.SETTINGS); };
+  if (g === 0) thead(gt(0), G.usage.ok ? ST.MAIN : ST.SETTINGS);
+  else {
+    thead(`${gt(0)} / ${gt(g)}`, null);
+    const bk = tbtn(scr, `← ${TRS('indietro', 'back')}`, 89, 32, () => goGroup(0), { color: C.MUTED });
+    bk.style.left = '378px'; bk.style.top = '5px';
+  }
+  if (G.setGroupShown !== g) G.setScroll = 0;
+  G.setGroupShown = g;
   const lst = obj(scr, 13, 47, 454, 273, { display: 'flex', flexDirection: 'column' }); lst.classList.add('scroll');
   G.setList = lst; requestAnimationFrame(() => { lst.scrollTop = G.setScroll || 0; });
   const briN = () => [TRS('bassa', 'low'), TRS('media', 'medium'), TRS('alta', 'high')][P.bri];
@@ -1579,39 +1592,53 @@ function uiSettings() {
   const slideVal = () => (P.slide ? `${P.slide}s` : TRS('spento', 'off'));
   const sg = (n) => (n >= 0 ? '+' : '') + n;
   const tzVal = () => (P.tz === TZ_ROME ? TRS('roma (auto)', 'rome (auto)') : `gmt${sg(P.tz)}`);
-  kvRow(lst, TRS('aggiorna ora', 'refresh now'), '↵', () => requestState(ST.LOADING));
-  kvRow(lst, TRS('intervallo', 'interval'), pollVal(), (v) => { P.poll = POLL_OPTS[(POLL_OPTS.indexOf(P.poll) + 1) % POLL_OPTS.length]; setText(v, pollVal()); });
-  kvRow(lst, 'slideshow', slideVal(), (v) => { P.slide = SL[(SL.indexOf(P.slide) + 1) % SL.length]; setText(v, slideVal()); });
-  kvRow(lst, TRS('lingua', 'language'), TRS('italiano', 'english'), () => { P.lang ^= 1; requestState(ST.SETTINGS); });
-  kvRow(lst, TRS('fuso orario', 'timezone'), tzVal(), (v) => { const i = TZ_OPTS.indexOf(P.tz); P.tz = TZ_OPTS[(i + 1) % TZ_OPTS.length]; setText(v, tzVal()); });
-  kvRow(lst, TRS('avviso reset', 'reset alert'), P.rstal ? TRS('sopra 80%', 'above 80%') : TRS('spento', 'off'), () => { P.rstal = !P.rstal; requestState(ST.SETTINGS); });
   const CCL = [TRS('spento', 'off'), TRS('sempre', 'always'), TRS('oltre 1 min', 'over 1 min'), TRS('oltre 5 min', 'over 5 min')];
-  kvRow(lst, TRS('suoni sul pc', 'sounds on pc'), P.pcsnd ? TRS('acceso', 'on') : TRS('spento', 'off'), () => { P.pcsnd = !P.pcsnd; requestState(ST.SETTINGS); });
-  kvRow(lst, TRS('avvisi claude code', 'claude code alerts'), CCL[P.ccal], () => { P.ccal = (P.ccal + 1) % 4; requestState(ST.SETTINGS); });
-  const CCC = [5, 10, 30, 0][P.ccclose];
-  kvRow(lst, TRS('chiudi avviso claude', 'close claude alert'), CCC ? TRS(`dopo ${CCC} s`, `after ${CCC} s`) : TRS('mai', 'never'), () => { P.ccclose = (P.ccclose + 1) % 4; requestState(ST.SETTINGS); });
-  kvRow(lst, TRS("luminosita'", 'brightness'), briN(), (v) => { P.bri = (P.bri + 1) % 3; applyBrightness(); setText(v, briN()); });
-  const NL = ['', '22:00-07:00', '23:00-07:00', '00:00-07:00'];
-  kvRow(lst, TRS('notte', 'night'), P.night ? NL[P.night] : TRS('spento', 'off'), () => { P.night = (P.night + 1) % 4; requestState(ST.SETTINGS); });
-  if (P.night) kvRow(lst, TRS('schermo di notte', 'screen at night'), P.nightclk ? TRS('orologio', 'clock') : TRS('spento', 'off'), () => { P.nightclk = !P.nightclk; requestState(ST.SETTINGS); });
-  if (P.night && P.nightclk) kvRow(lst, TRS("luminosità notte", 'night brightness'), P.nightbri ? TRS('molto tenue', 'very dim') : TRS('tenue', 'dim'), () => { P.nightbri ^= 1; requestState(ST.SETTINGS); });
-  if (P.night) kvRow(lst, TRS('aggiornamenti di notte', 'updates at night'), P.nightp ? TRS('in pausa', 'paused') : TRS('attivi', 'active'), () => { P.nightp = !P.nightp; requestState(ST.SETTINGS); });
-  const PCI = [1, 3, 5, 60];
-  kvRow(lst, TRS('intervallo pc', 'pc interval'), PCI[P.pcint || 0] >= 60 ? '1min' : `${PCI[P.pcint || 0]}s`, () => { P.pcint = ((P.pcint || 0) + 1) % 4; requestState(ST.SETTINGS); });
-  kvRow(lst, TRS('home dopo', 'home after'), P.clock ? `${CLOCK_MIN[P.clock]} min` : TRS('spento', 'off'), () => { P.clock = (P.clock + 1) % 4; requestState(ST.SETTINGS); });
-  kvRow(lst, TRS('attenua dopo', 'dim after'), P.dim ? `${DIM_MIN[P.dim]} min` : TRS('spento', 'off'), () => { P.dim = (P.dim + 1) % 4; requestState(ST.SETTINGS); });
-  kvRow(lst, 'wifi', escapeHtml(G.wifiConnected ? G.ssid : '--'), () => { G.onboarding = false; requestState(ST.WIFI); });
-  kvRow(lst, TRS('rete locale', 'local network'), G.wifiConnected ? `http://${DEVICE_IP}` : TRS('non connesso', 'not connected'), null);
-  kvRow(lst, TRS('nome in rete', 'network name'), 'ritmo-code.local', null, { color: C.MUTED, valColor: C.MUTED });
-  kvRow(lst, 'account', `${escapeHtml(G.accts.label[G.accts.active])} (${accountCount()}/4)`, () => { G.acctDelArmed = -1; requestState(ST.ACCOUNTS); });
-  kvRow(lst, TRS('modelli', 'models'), TRS('modifica id', 'edit ids'), () => requestState(ST.MODELS));
-  kvRow(lst, 'token', TRS('cambia', 'change'), () => { G.tokenTargetSlot = G.accts.active; G.pendingLabel = ''; requestState(ST.TOKEN); });
-  kvRow(lst, TRS('contatore fps', 'fps counter'), P.perf ? TRS('acceso', 'on') : TRS('spento', 'off'), (v) => { P.perf = !P.perf; setText(v, P.perf ? TRS('acceso', 'on') : TRS('spento', 'off')); });
-  kvRow(lst, 'info', `v${CFG.FW}`, () => requestState(ST.ABOUT));
-  kvRow(lst, TRS('cancella tutto', 'erase everything'), '', (v, k) => {
-    if (!G.wipeArmed) { G.wipeArmed = true; setText(v, TRS('tocca ancora', 'tap again'), C.BAD); }
-    else { G.wipeArmed = false; factoryReset(); requestState(ST.WIFI); }
-  }, { color: C.BAD, valColor: C.BAD });
+  const sub = (i, val) => kvRow(lst, gt(i), `${escapeHtml(val)} →`, () => goGroup(i));
+  if (g === 0) {
+    kvRow(lst, TRS('aggiorna ora', 'refresh now'), '↵', () => requestState(ST.LOADING));
+    sub(1, G.accts.label[G.accts.active]);
+    sub(2, `claude ${CCL[P.ccal]}`);
+    sub(3, TRS(`luce ${briN()}`, `light ${briN()}`));
+    sub(4, G.wifiConnected ? G.ssid : '--');
+    sub(5, `v${CFG.FW}`);
+  } else if (g === 1) {
+    kvRow(lst, TRS('intervallo', 'interval'), pollVal(), (v) => { P.poll = POLL_OPTS[(POLL_OPTS.indexOf(P.poll) + 1) % POLL_OPTS.length]; setText(v, pollVal()); });
+    kvRow(lst, 'account', `${escapeHtml(G.accts.label[G.accts.active])} (${accountCount()}/4)`, () => { G.acctDelArmed = -1; requestState(ST.ACCOUNTS); });
+    kvRow(lst, TRS('modelli', 'models'), TRS('modifica id', 'edit ids'), () => requestState(ST.MODELS));
+    kvRow(lst, 'token', TRS('cambia', 'change'), () => { G.tokenTargetSlot = G.accts.active; G.pendingLabel = ''; requestState(ST.TOKEN); });
+  } else if (g === 2) {
+    kvRow(lst, TRS('avvisi claude code', 'claude code alerts'), CCL[P.ccal], () => { P.ccal = (P.ccal + 1) % 4; requestState(ST.SETTINGS); });
+    const CCC = [5, 10, 30, 0][P.ccclose];
+    kvRow(lst, TRS('chiudi avviso claude', 'close claude alert'), CCC ? TRS(`dopo ${CCC} s`, `after ${CCC} s`) : TRS('mai', 'never'), () => { P.ccclose = (P.ccclose + 1) % 4; requestState(ST.SETTINGS); });
+    kvRow(lst, TRS('suoni sul pc', 'sounds on pc'), P.pcsnd ? TRS('acceso', 'on') : TRS('spento', 'off'), () => { P.pcsnd = !P.pcsnd; requestState(ST.SETTINGS); });
+    kvRow(lst, TRS('avviso reset', 'reset alert'), P.rstal ? TRS('sopra 80%', 'above 80%') : TRS('spento', 'off'), () => { P.rstal = !P.rstal; requestState(ST.SETTINGS); });
+  } else if (g === 3) {
+    kvRow(lst, TRS("luminosita'", 'brightness'), briN(), (v) => { P.bri = (P.bri + 1) % 3; applyBrightness(); setText(v, briN()); });
+    const NL = ['', '22:00-07:00', '23:00-07:00', '00:00-07:00'];
+    kvRow(lst, TRS('notte', 'night'), P.night ? NL[P.night] : TRS('spento', 'off'), () => { P.night = (P.night + 1) % 4; requestState(ST.SETTINGS); });
+    if (P.night) kvRow(lst, TRS('schermo di notte', 'screen at night'), P.nightclk ? TRS('orologio', 'clock') : TRS('spento', 'off'), () => { P.nightclk = !P.nightclk; requestState(ST.SETTINGS); });
+    if (P.night && P.nightclk) kvRow(lst, TRS("luminosità notte", 'night brightness'), P.nightbri ? TRS('molto tenue', 'very dim') : TRS('tenue', 'dim'), () => { P.nightbri ^= 1; requestState(ST.SETTINGS); });
+    if (P.night) kvRow(lst, TRS('aggiornamenti di notte', 'updates at night'), P.nightp ? TRS('in pausa', 'paused') : TRS('attivi', 'active'), () => { P.nightp = !P.nightp; requestState(ST.SETTINGS); });
+    kvRow(lst, TRS('attenua dopo', 'dim after'), P.dim ? `${DIM_MIN[P.dim]} min` : TRS('spento', 'off'), () => { P.dim = (P.dim + 1) % 4; requestState(ST.SETTINGS); });
+    kvRow(lst, TRS('home dopo', 'home after'), P.clock ? `${CLOCK_MIN[P.clock]} min` : TRS('spento', 'off'), () => { P.clock = (P.clock + 1) % 4; requestState(ST.SETTINGS); });
+    kvRow(lst, 'slideshow', slideVal(), (v) => { P.slide = SL[(SL.indexOf(P.slide) + 1) % SL.length]; setText(v, slideVal()); });
+  } else if (g === 4) {
+    kvRow(lst, 'wifi', escapeHtml(G.wifiConnected ? G.ssid : '--'), () => { G.onboarding = false; requestState(ST.WIFI); });
+    kvRow(lst, TRS('rete locale', 'local network'), G.wifiConnected ? `http://${DEVICE_IP}` : TRS('non connesso', 'not connected'), null);
+    kvRow(lst, TRS('nome in rete', 'network name'), 'ritmo-code.local', null, { color: C.MUTED, valColor: C.MUTED });
+    const PCI = [1, 3, 5, 60];
+    kvRow(lst, TRS('intervallo pc', 'pc interval'), PCI[P.pcint || 0] >= 60 ? '1min' : `${PCI[P.pcint || 0]}s`, () => { P.pcint = ((P.pcint || 0) + 1) % 4; requestState(ST.SETTINGS); });
+  } else {
+    kvRow(lst, TRS('lingua', 'language'), TRS('italiano', 'english'), () => { P.lang ^= 1; requestState(ST.SETTINGS); });
+    kvRow(lst, TRS('fuso orario', 'timezone'), tzVal(), (v) => { const i = TZ_OPTS.indexOf(P.tz); P.tz = TZ_OPTS[(i + 1) % TZ_OPTS.length]; setText(v, tzVal()); });
+    kvRow(lst, TRS('aggiorna firmware', 'update firmware'), 'wifi', () => slog('[SIM] aggiornamento firmware: sul dispositivo'));
+    kvRow(lst, 'info', `v${CFG.FW}`, () => requestState(ST.ABOUT));
+    kvRow(lst, TRS('contatore fps', 'fps counter'), P.perf ? TRS('acceso', 'on') : TRS('spento', 'off'), (v) => { P.perf = !P.perf; setText(v, P.perf ? TRS('acceso', 'on') : TRS('spento', 'off')); });
+    kvRow(lst, TRS('cancella tutto', 'erase everything'), '', (v) => {
+      if (!G.wipeArmed) { G.wipeArmed = true; setText(v, TRS('tocca ancora', 'tap again'), C.BAD); }
+      else { G.wipeArmed = false; factoryReset(); requestState(ST.WIFI); }
+    }, { color: C.BAD, valColor: C.BAD });
+  }
 }
 function uiAccounts() {
   thead(TRS('account', 'accounts'), ST.SETTINGS);
@@ -2028,7 +2055,7 @@ function initPanel() {
 }
 
 // accesso per tools/capture_screens.js (immagini del README)
-window.__sim = { API, G, ST, P, boot, requestState, setTile, refreshUiValues, dashTick, showMoment, momentClose, ccEvent, noticeClose, tmMenuOpen, wxWeekOpen, tmStart, TM, TM_TIMER, TM_FOCUS, TM_BREAK, pauseMenuOpen, pauseMenuClose, nightClockShow, nightClockClose };
+window.__sim = { API, G, ST, P, boot, requestState, setTile, refreshUiValues, dashTick, showMoment, momentClose, ccEvent, uiSettings, noticeClose, tmMenuOpen, wxWeekOpen, tmStart, TM, TM_TIMER, TM_FOCUS, TM_BREAK, pauseMenuOpen, pauseMenuClose, nightClockShow, nightClockClose };
 initPanel();
 applyBrightness();
 boot(true);

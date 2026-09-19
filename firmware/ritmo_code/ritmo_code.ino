@@ -56,6 +56,7 @@ LV_FONT_DECLARE(font_jbm_150)
 #define U_REFRESH "\xE2\x86\xBB"   // ↻
 #define U_MENU    "\xE2\x89\xA1"   // ≡
 #define U_LEFT    "\xE2\x86\x90"   // ←
+#define U_RIGHT   "\xE2\x86\x92"   // →
 #define U_ENTER   "\xE2\x86\xB5"   // ↵
 #define U_BKSP    "\xE2\x8C\xAB"   // ⌫
 #define U_BLOCK   "\xE2\x96\x88"   // █
@@ -424,6 +425,7 @@ static void show_moment(int win, int thr);
 static void moment_tick();
 static void moment_close();
 static void cc_event(long id, const char *ev, const char *proj, int dur, int age);
+static int g_setGroup = 0;                   // gruppo di impostazioni aperto (0 = pagina principale)
 static char g_ccEv[8], g_ccProj[28];            // ultimo evento di Claude Code da mostrare
 static void tm_menu_open(lv_event_t *e);
 static void tm_label(char *out, size_t sz);
@@ -4022,6 +4024,7 @@ static void logo_cb(lv_event_t *e) {
 
 static void ui_main() {
   lv_obj_t *scr = lv_screen_active();
+  g_setGroup = 0;                            // impostazioni: si riparte dalla pagina principale
   lv_obj_set_style_bg_color(scr, lv_color_hex(C_BG), 0);
 
   start_data_web();
@@ -4271,79 +4274,129 @@ static void settings_action_cb(lv_event_t *e) {
       break;
   }
 }
+// Impostazioni a gruppi: una pagina principale con le voci, e una pagina per gruppo
+enum { SG_MAIN = 0, SG_CLAUDE, SG_ALERTS, SG_SCREEN, SG_NET, SG_SYSTEM };
+static void set_group_cb(lv_event_t *e) {
+  g_setGroup = (int)(intptr_t)lv_event_get_user_data(e);
+  g_setScroll = 0;
+  request_state(ST_SETTINGS);
+}
 static void ui_settings() {
   lv_obj_t *scr = lv_screen_active();
   g_wipeArmed = false;
   start_data_web();
-  thead(scr, TRS("impostazioni", "settings"), g_usage.ok ? ST_MAIN : ST_SETTINGS);
+  static int lastGroup = -1;                       // cambiando gruppo si riparte dall'inizio della lista
+  if (lastGroup != g_setGroup) g_setScroll = 0;
+  lastGroup = g_setGroup;
+  static const char *GT_IT[6] = {"impostazioni", "claude", "avvisi", "schermo", "rete e pc", "sistema"};
+  static const char *GT_EN[6] = {"settings", "claude", "alerts", "screen", "network and pc", "system"};
+  char title[40];
+  if (g_setGroup == SG_MAIN) strcpy(title, g_lang ? GT_EN[0] : GT_IT[0]);
+  else snprintf(title, sizeof(title), "%s / %s", g_lang ? GT_EN[0] : GT_IT[0], g_lang ? GT_EN[g_setGroup] : GT_IT[g_setGroup]);
+  if (g_setGroup == SG_MAIN) thead(scr, title, g_usage.ok ? ST_MAIN : ST_SETTINGS);
+  else {
+    thead(scr, title, -1);
+    tbtn(scr, 378, 5, 89, 32, TRS(U_LEFT " indietro", U_LEFT " back"), F14, C_MUTED, C_BORDER, set_group_cb, (void *)(intptr_t)SG_MAIN);
+  }
   lv_obj_t *lst = tlist(scr, 13, 47, 454, 273);
   g_setList = lst;
-
-  char poll[16]; poll_label(poll, sizeof(poll));
-  char tz[32]; tz_label(tz, sizeof(tz));
-  char slide[16];
-  if (g_slideSec) snprintf(slide, sizeof(slide), "%ds", g_slideSec); else strcpy(slide, TRS("spento", "off"));
+  auto sub = [&](int g, const char *val) {         // voce che apre un gruppo
+    char v[48]; snprintf(v, sizeof(v), "%s " U_RIGHT, val);
+    kv_row(lst, g_lang ? GT_EN[g] : GT_IT[g], v, C_TEXT, C_ACCENT, set_group_cb, (void *)(intptr_t)g);
+  };
+  static const char *CC_LBL_IT[4] = {"spento", "sempre", "oltre 1 min", "oltre 5 min"};
+  static const char *CC_LBL_EN[4] = {"off", "always", "over 1 min", "over 5 min"};
   char acct[40];
   snprintf(acct, sizeof(acct), "%s (%d/%d)", g_accts.label[g_accts.active], accountCount(g_accts), ACCT_MAX);
   String ssidStr = g_wifi.isConnected() ? g_wifi.getSSID() : String("--");
   char ssidBuf[33];
   strlcpy(ssidBuf, ssidStr.c_str(), sizeof(ssidBuf));
 
-  kv_row(lst, TRS("aggiorna ora", "refresh now"), U_ENTER,               C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)0);
-  kv_row(lst, TRS("intervallo", "interval"),      poll,                  C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)6, &g_pollLbl);
-  kv_row(lst, "slideshow",                        slide,                 C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)8, &g_slideLbl);
-  kv_row(lst, TRS("lingua", "language"),          TRS("italiano", "english"), C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)9);
-  kv_row(lst, TRS("fuso orario", "timezone"),     tz,                    C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)7, &g_tzLbl);
-  kv_row(lst, TRS("avviso reset", "reset alert"), g_resetAlert ? TRS("sopra 80%", "above 80%") : TRS("spento", "off"),
-         C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)15);
-  static const char *CC_LBL_IT[4] = {"spento", "sempre", "oltre 1 min", "oltre 5 min"};
-  static const char *CC_LBL_EN[4] = {"off", "always", "over 1 min", "over 5 min"};
-  kv_row(lst, TRS("suoni sul pc", "sounds on pc"), g_pcSound ? TRS("acceso", "on") : TRS("spento", "off"),
-         C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)24);
-  kv_row(lst, TRS("avvisi claude code", "claude code alerts"), g_lang ? CC_LBL_EN[g_ccAlert] : CC_LBL_IT[g_ccAlert],
-         C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)23);
-  char ccc[16];
-  if (CC_CLOSE_S[g_ccCloseIdx]) snprintf(ccc, sizeof(ccc), TRS("dopo %d s", "after %d s"), CC_CLOSE_S[g_ccCloseIdx]);
-  else                          strcpy(ccc, TRS("mai", "never"));
-  kv_row(lst, TRS("chiudi avviso claude", "close claude alert"), ccc, C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)25);
-  kv_row(lst, TRS("luminosità", "brightness"),    bri_label(),           C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)3, &g_briLbl);
-  static const char *NIGHT_LBL[4] = {"", "22:00-07:00", "23:00-07:00", "00:00-07:00"};
-  char dim[16];
-  if (g_dimIdx) snprintf(dim, sizeof(dim), "%d min", DIM_MIN[g_dimIdx]); else strcpy(dim, TRS("spento", "off"));
-  kv_row(lst, TRS("notte", "night"), g_nightIdx ? NIGHT_LBL[g_nightIdx] : TRS("spento", "off"),
-         C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)16);
-  if (g_nightIdx) {
-    kv_row(lst, TRS("schermo di notte", "screen at night"), g_nightClock ? TRS("orologio", "clock") : TRS("spento", "off"),
-           C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)21);
-    if (g_nightClock)
-      kv_row(lst, TRS("luminosit\xC3\xA0 notte", "night brightness"), g_nightBri ? TRS("molto tenue", "very dim") : TRS("tenue", "dim"),
-             C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)22);
+  switch (g_setGroup) {
+    case SG_MAIN: {
+      kv_row(lst, TRS("aggiorna ora", "refresh now"), U_ENTER, C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)0);
+      sub(SG_CLAUDE, g_accts.label[g_accts.active]);
+      char al[32];
+      snprintf(al, sizeof(al), "claude %s", g_lang ? CC_LBL_EN[g_ccAlert] : CC_LBL_IT[g_ccAlert]);
+      sub(SG_ALERTS, al);
+      char sc[32];
+      snprintf(sc, sizeof(sc), TRS("luce %s", "light %s"), bri_label());
+      sub(SG_SCREEN, sc);
+      sub(SG_NET, ssidBuf);
+      sub(SG_SYSTEM, "v" FW_VERSION);
+      break;
+    }
+    case SG_CLAUDE: {
+      char poll[16]; poll_label(poll, sizeof(poll));
+      kv_row(lst, TRS("intervallo", "interval"), poll, C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)6, &g_pollLbl);
+      kv_row(lst, "account", acct, C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)11);
+      kv_row(lst, TRS("modelli", "models"), TRS("modifica id", "edit ids"), C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)12);
+      kv_row(lst, "token", TRS("cambia", "change"), C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)2);
+      break;
+    }
+    case SG_ALERTS: {
+      kv_row(lst, TRS("avvisi claude code", "claude code alerts"), g_lang ? CC_LBL_EN[g_ccAlert] : CC_LBL_IT[g_ccAlert],
+             C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)23);
+      char ccc[16];
+      if (CC_CLOSE_S[g_ccCloseIdx]) snprintf(ccc, sizeof(ccc), TRS("dopo %d s", "after %d s"), CC_CLOSE_S[g_ccCloseIdx]);
+      else                          strcpy(ccc, TRS("mai", "never"));
+      kv_row(lst, TRS("chiudi avviso claude", "close claude alert"), ccc, C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)25);
+      kv_row(lst, TRS("suoni sul pc", "sounds on pc"), g_pcSound ? TRS("acceso", "on") : TRS("spento", "off"),
+             C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)24);
+      kv_row(lst, TRS("avviso reset", "reset alert"), g_resetAlert ? TRS("sopra 80%", "above 80%") : TRS("spento", "off"),
+             C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)15);
+      break;
+    }
+    case SG_SCREEN: {
+      kv_row(lst, TRS("luminosit\xC3\xA0", "brightness"), bri_label(), C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)3, &g_briLbl);
+      static const char *NIGHT_LBL[4] = {"", "22:00-07:00", "23:00-07:00", "00:00-07:00"};
+      kv_row(lst, TRS("notte", "night"), g_nightIdx ? NIGHT_LBL[g_nightIdx] : TRS("spento", "off"),
+             C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)16);
+      if (g_nightIdx) {
+        kv_row(lst, TRS("schermo di notte", "screen at night"), g_nightClock ? TRS("orologio", "clock") : TRS("spento", "off"),
+               C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)21);
+        if (g_nightClock)
+          kv_row(lst, TRS("luminosit\xC3\xA0 notte", "night brightness"), g_nightBri ? TRS("molto tenue", "very dim") : TRS("tenue", "dim"),
+                 C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)22);
+        kv_row(lst, TRS("aggiornamenti di notte", "updates at night"), g_nightPause ? TRS("in pausa", "paused") : TRS("attivi", "active"),
+               C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)17);
+      }
+      char dim[16];
+      if (g_dimIdx) snprintf(dim, sizeof(dim), "%d min", DIM_MIN[g_dimIdx]); else strcpy(dim, TRS("spento", "off"));
+      kv_row(lst, TRS("attenua dopo", "dim after"), dim, C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)18);
+      char clk[16];
+      if (g_clockIdx) snprintf(clk, sizeof(clk), "%d min", CLOCK_MIN[g_clockIdx]); else strcpy(clk, TRS("spento", "off"));
+      kv_row(lst, TRS("home dopo", "home after"), clk, C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)19);
+      char slide[16];
+      if (g_slideSec) snprintf(slide, sizeof(slide), "%ds", g_slideSec); else strcpy(slide, TRS("spento", "off"));
+      kv_row(lst, "slideshow", slide, C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)8, &g_slideLbl);
+      break;
+    }
+    case SG_NET: {
+      kv_row(lst, "wifi", ssidBuf, C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)1);
+      // dove aprire il pannello web dal browser (stessa rete Wi-Fi)
+      char ipBuf[40];
+      if (g_wifi.isConnected()) snprintf(ipBuf, sizeof(ipBuf), "%s %ddBm", WiFi.localIP().toString().c_str(), (int)WiFi.RSSI());
+      else                      strcpy(ipBuf, TRS("non connesso", "not connected"));
+      kv_row(lst, TRS("rete locale", "local network"), ipBuf, C_TEXT, C_ACCENT, nullptr, nullptr);
+      kv_row(lst, TRS("nome in rete", "network name"), "ritmo-code.local", C_MUTED, C_MUTED, nullptr, nullptr);
+      char pci[12];
+      if (PC_INT_S[g_pcIntIdx] >= 60) snprintf(pci, sizeof(pci), "%dmin", PC_INT_S[g_pcIntIdx] / 60); else snprintf(pci, sizeof(pci), "%ds", PC_INT_S[g_pcIntIdx]);
+      kv_row(lst, TRS("intervallo pc", "pc interval"), pci, C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)20);
+      break;
+    }
+    case SG_SYSTEM: {
+      kv_row(lst, TRS("lingua", "language"), TRS("italiano", "english"), C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)9);
+      char tz[32]; tz_label(tz, sizeof(tz));
+      kv_row(lst, TRS("fuso orario", "timezone"), tz, C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)7, &g_tzLbl);
+      kv_row(lst, TRS("aggiorna firmware", "update firmware"), "wifi", C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)14);
+      kv_row(lst, "info", "v" FW_VERSION, C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)10);
+      kv_row(lst, TRS("contatore fps", "fps counter"), g_perfOn ? TRS("acceso", "on") : TRS("spento", "off"),
+             C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)13);
+      kv_row(lst, TRS("cancella tutto", "erase everything"), "", C_BAD, C_BAD, settings_action_cb, (void *)(intptr_t)4, &g_wipeLbl);
+      break;
+    }
   }
-  if (g_nightIdx)
-    kv_row(lst, TRS("aggiornamenti di notte", "updates at night"), g_nightPause ? TRS("in pausa", "paused") : TRS("attivi", "active"),
-           C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)17);
-  char clk[16];
-  if (g_clockIdx) snprintf(clk, sizeof(clk), "%d min", CLOCK_MIN[g_clockIdx]); else strcpy(clk, TRS("spento", "off"));
-  char pci[12];
-  if (PC_INT_S[g_pcIntIdx] >= 60) snprintf(pci, sizeof(pci), "%dmin", PC_INT_S[g_pcIntIdx] / 60); else snprintf(pci, sizeof(pci), "%ds", PC_INT_S[g_pcIntIdx]);
-  kv_row(lst, TRS("intervallo pc", "pc interval"),  pci,                   C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)20);
-  kv_row(lst, TRS("home dopo", "home after"),      clk,                   C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)19);
-  kv_row(lst, TRS("attenua dopo", "dim after"),    dim,                   C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)18);
-  kv_row(lst, "wifi",                             ssidBuf,               C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)1);
-  // dove aprire il pannello web dal browser (stessa rete Wi-Fi)
-  char ipBuf[40];
-  if (g_wifi.isConnected()) snprintf(ipBuf, sizeof(ipBuf), "%s %ddBm", WiFi.localIP().toString().c_str(), (int)WiFi.RSSI());
-  else                      strcpy(ipBuf, TRS("non connesso", "not connected"));
-  kv_row(lst, TRS("rete locale", "local network"), ipBuf,              C_TEXT, C_ACCENT, nullptr, nullptr);
-  kv_row(lst, TRS("nome in rete", "network name"), "ritmo-code.local",  C_MUTED, C_MUTED, nullptr, nullptr);
-  kv_row(lst, "account",                          acct,                  C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)11);
-  kv_row(lst, TRS("modelli", "models"),           TRS("modifica id", "edit ids"), C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)12);
-  kv_row(lst, "token",                            TRS("cambia", "change"), C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)2);
-  kv_row(lst, TRS("contatore fps", "fps counter"), g_perfOn ? TRS("acceso", "on") : TRS("spento", "off"),
-         C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)13);
-  kv_row(lst, TRS("aggiorna firmware", "update firmware"), "wifi",     C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)14);
-  kv_row(lst, "info",                             "v" FW_VERSION,        C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)10);
-  kv_row(lst, TRS("cancella tutto", "erase everything"), "",             C_BAD, C_BAD, settings_action_cb, (void *)(intptr_t)4, &g_wipeLbl);
   if (g_setScroll > 0) { lv_obj_update_layout(lst); lv_obj_scroll_to_y(lst, g_setScroll, LV_ANIM_OFF); }
 }
 
