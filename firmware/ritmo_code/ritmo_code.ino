@@ -441,6 +441,7 @@ static volatile int g_updPct = 0;
 static char g_updTag[16] = "", g_updUrl[200] = "";
 static String g_updErr;
 static uint32_t g_updCheckedMs = 0;
+static uint32_t g_updCheckStartMs = 0;        // "controllo..." resta a schermo almeno 1,5 s
 static void upd_progress(int pct) { g_updPct = pct; }
 // "v3.9.3" piu' recente di FW_VERSION? (confronto numero per numero)
 static bool ver_newer(const char *tag) {
@@ -4539,7 +4540,7 @@ static void settings_action_cb(lv_event_t *e) {
     case 26:                                           // aggiornamenti: cerca / installa
       if (g_updState == UPD_AVAILABLE) upd_install_start();
       else if (g_updState != UPD_CHECKING && g_updState != UPD_INSTALLING) {
-        g_updState = UPD_CHECKING; g_updCheckedMs = millis(); g_updCheckReq = true;
+        g_updState = UPD_CHECKING; g_updCheckedMs = g_updCheckStartMs = millis(); g_updCheckReq = true;
         request_state(ST_SETTINGS);
       }
       break;
@@ -5512,7 +5513,7 @@ void loop() {
   }
   if ((g_updState == UPD_INSTALLING || g_updState == UPD_REBOOT) && !g_upd.scrim) upd_overlay();   // dopo un cambio di schermata
   upd_tick();
-  if (g_updDone) {
+  if (g_updDone && millis() - g_updCheckStartMs >= 1500) {   // il risultato sostituisce "controllo..." dopo 1,5 s
     g_updDone = false;
     set_hdr_status();
     if (g_state == ST_SETTINGS) request_state(ST_SETTINGS);
