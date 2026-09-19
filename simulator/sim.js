@@ -16,7 +16,7 @@ const C = {
   BORDER: '#3A3834', TEXT: '#E8E6DF', MUTED: '#8E8B82', FAINT: '#5C5A55', ACCENT: '#D97757',
   OK: '#9BC08A', WARN: '#E0B25A', BAD: '#E06C5A', BLUE: '#7DB9D6', LILAC: '#B7A6E0',
 };
-const CFG = { PIN_LEN: 4, MAX_PIN_ATTEMPTS: 10, LOCKOUT_BASE_SEC: 60, ACCT_MAX: 4, FW: '3.9.1' };
+const CFG = { PIN_LEN: 4, MAX_PIN_ATTEMPTS: 10, LOCKOUT_BASE_SEC: 60, ACCT_MAX: 4, FW: '3.9.2' };
 const DEMO_PIN = '1234';
 
 const $ = (id) => document.getElementById(id);
@@ -1018,7 +1018,15 @@ function wxWeekOpen() {
     col(`${rain}%`, 12, rain >= 40 ? C.BLUE : C.FAINT, x, 198);
     if (d) obj(s, x, 48, 1, 164, { background: C.BORDER });
   });
-  const f = label(s, TRS(`oggi: ${wxDesc(WX.code)} · sole ${WX.sunrise}-${WX.sunset}`, `today: ${wxDesc(WX.code)} · sun ${WX.sunrise}-${WX.sunset}`), 12, C.MUTED, 10, 236);
+  if (!WX.at) WX.at = nowEpoch();
+  const f = label(s, TRS(`oggi: ${wxDesc(WX.code)} · sole ${WX.sunrise}-${WX.sunset} · aggiornato ${fmtHm(WX.at)}`, `today: ${wxDesc(WX.code)} · sun ${WX.sunrise}-${WX.sunset} · updated ${fmtHm(WX.at)}`), 12, C.MUTED, 10, 236);
+  const rb = tbtn(s, WX.loading ? TRS('aggiornamento...', 'updating...') : TRS('↻ aggiorna', '↻ refresh'), 150, 30, () => {
+    if (WX.loading) return;
+    WX.loading = true; wxWeekOpen();
+    setTimeout(() => { WX.loading = false; WX.at = nowEpoch(); slog('[METEO] aggiornato'); if (WXW) wxWeekOpen(); }, 1200);
+  }, { color: C.ACCENT, size: 14 });
+  rb.style.left = '24px'; rb.style.top = '268px';
+  rb.addEventListener('click', (e) => e.stopPropagation());
   Object.assign(f.style, { width: '460px', textAlign: 'center' });
   label(s, TRS('[ tocca per chiudere ]', '[ tap to close ]'), 11, C.FAINT, 292, 284);
 }
@@ -1042,7 +1050,7 @@ function buildTileHome(t) {
     o.style.cursor = 'pointer';
     o.addEventListener('click', (e) => { if (realMs() - lastDragAt < 300) return; e.stopPropagation(); wxWeekOpen(); });
   }
-  const b = tbox(t, 13, 115, 454, 74, 'claude');
+  const b = tbox(t, 13, 115, 454, 74, 'claude'); h.clBox = b;
   const goTo = (el, tile) => { el.style.cursor = 'pointer'; el.addEventListener('click', (e) => { if (realMs() - lastDragAt < 300) return; e.stopPropagation(); setTile(tile, true); }); };
   goTo(b, 1);                                                      // riquadro claude -> pagina ora
   h.row = [0, 1].map((i) => {
@@ -1190,7 +1198,18 @@ const TAB_PATH = ['/home', '/usage', '/models', '/window', '/rhythm', '/weeks', 
 function hdrIdentity() {
   if (!UI.hdrId) return;
   const badge = accountCount() > 1 ? ` <span style="color:${C.ACCENT}">@${escapeHtml(G.accts.label[G.accts.active].slice(0, 10))}</span>` : '';
-  UI.hdrId.innerHTML = `${SPARK} ritmo-code <span style="color:${C.FAINT}">${TAB_PATH[G.curTile]}</span>${badge}`;
+  UI.hdrId.innerHTML = `<span class="hspark" style="color:${C.ACCENT}">✻</span> ritmo-code <span style="color:${C.FAINT}">${TAB_PATH[G.curTile]}</span>${badge}`;
+}
+// Claude al lavoro (sessioni dal PC Monitor): legenda del riquadro claude e ✻ che gira
+const SPARK_SPIN = ['·', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳', '✢'];
+function ccBusySet(n) {
+  G.ccBusy = n;
+  if (UI.hm && UI.hm.clBox) {
+    UI.hm.clBox._lg.textContent = n > 1 ? TRS(`claude · ${n} al lavoro`, `claude · ${n} working`) : n === 1 ? TRS('claude · al lavoro', 'claude · working') : 'claude';
+    UI.hm.clBox._lg.style.color = n ? C.ACCENT : '';
+  }
+  const sp = UI.hdrId && UI.hdrId.querySelector('.hspark');
+  if (sp && !n) sp.textContent = '✻';
 }
 function setTile(i, anim) {
   G.curTile = i;
@@ -1951,6 +1970,10 @@ function loop() {
       if (k === NT_CLAUDE) ccShow(t0); else tmShow(t0);
     }
     if (NT) noticeTick();
+    if (G.ccBusy && r - (G.sparkAt || 0) > 160) {
+      G.sparkAt = r; G.sparkK = ((G.sparkK || 4) + 1) % 10;
+      const sp = UI.hdrId && UI.hdrId.querySelector('.hspark'); if (sp) sp.textContent = SPARK_SPIN[G.sparkK];
+    }
   }
   if ((state === ST.PIN || state === ST.SETUP_PIN) && pinMsg && G.lockoutUntil > 0) {
     if (millis() < G.lockoutUntil) setText(pinMsg, TRS(`Attendi ${Math.ceil((G.lockoutUntil - millis()) / 1000)}s`, `Wait ${Math.ceil((G.lockoutUntil - millis()) / 1000)}s`));
@@ -2029,6 +2052,7 @@ function initPanel() {
   });
   $('ccBtns').addEventListener('click', (e) => {
     const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.busy !== undefined) { ccBusySet(+b.dataset.busy); return; }
     if (state !== ST.MAIN) { slog('[SIM] gli avvisi si vedono sul dashboard'); return; }
     ccEvent(b.dataset.ev, 'ritmo-code', +b.dataset.dur);
   });
@@ -2054,7 +2078,7 @@ function initPanel() {
 }
 
 // accesso per tools/capture_screens.js (immagini del README)
-window.__sim = { API, G, ST, P, boot, requestState, setTile, refreshUiValues, dashTick, showMoment, momentClose, ccEvent, uiSettings, noticeClose, tmMenuOpen, wxWeekOpen, tmStart, TM, TM_TIMER, TM_FOCUS, TM_BREAK, pauseMenuOpen, pauseMenuClose, nightClockShow, nightClockClose };
+window.__sim = { API, G, ST, P, boot, requestState, setTile, refreshUiValues, dashTick, showMoment, momentClose, ccEvent, ccBusySet, uiSettings, noticeClose, tmMenuOpen, wxWeekOpen, tmStart, TM, TM_TIMER, TM_FOCUS, TM_BREAK, pauseMenuOpen, pauseMenuClose, nightClockShow, nightClockClose };
 initPanel();
 applyBrightness();
 boot(true);

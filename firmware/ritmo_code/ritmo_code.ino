@@ -362,6 +362,7 @@ static lv_point_precise_t g_mXPts[NMODELS][4][2];   // occhi a X (mood 3)
 struct DashUI {
   lv_obj_t *tv, *tile[NTILES], *tab[NTILES];
   lv_obj_t *hdrPath, *hdrAcct, *refBar, *pauseBtn, *pauseBar[2], *pausePlay;
+  lv_obj_t *hdrSpark, *hmClLegend;                // ✻ che gira e "claude · al lavoro" quando Claude lavora
   // ora
   lv_obj_t *agPct5, *agCd5, *agAt5, *agPct7, *agCd7, *agAt7;
   Blocks blk5, blk7;
@@ -426,7 +427,9 @@ static void moment_tick();
 static void moment_close();
 static void cc_event(long id, const char *ev, const char *proj, int dur, int age);
 static int g_setGroup = 0;                   // gruppo di impostazioni aperto (0 = pagina principale)
-static char g_ccEv[8], g_ccProj[28];            // ultimo evento di Claude Code da mostrare
+static char g_ccEv[8], g_ccProj[28];
+static int  g_ccBusyN = 0;                      // sessioni di Claude Code al lavoro (PC Monitor)
+static void cc_busy_ui();            // ultimo evento di Claude Code da mostrare
 static void tm_menu_open(lv_event_t *e);
 static void tm_label(char *out, size_t sz);
 static uint32_t tm_color();
@@ -1790,6 +1793,7 @@ static void handleClaudeEvent() {
     if (isalnum((unsigned char)ch) || ch == '.' || ch == '_' || ch == '-' || ch == ' ') pj[n++] = ch;
   }
   pj[n] = 0;
+  if (g_web->hasArg("busy")) { g_ccBusyN = g_web->arg("busy").toInt(); cc_busy_ui(); }
   cc_event(g_web->arg("id").toInt(), ev.c_str(), pj, g_web->hasArg("dur") ? g_web->arg("dur").toInt() : -1, 0);
   g_web->send(204, "text/plain", "");
 }
@@ -2696,7 +2700,16 @@ static void wx_icon(lv_obj_t *b, int code, bool day) {
 }
 // ---- Previsioni della settimana: si aprono toccando il meteo nella home ----
 static lv_obj_t *g_wxWeek = nullptr;
-static void wx_week_close() { if (g_wxWeek) { lv_obj_delete(g_wxWeek); g_wxWeek = nullptr; } }
+static lv_obj_t *g_wxWeekBtn = nullptr;          // etichetta del tasto aggiorna
+// tasto aggiorna: scarica subito il meteo (task extra); a fine download il riquadro si ridisegna
+static void wx_refresh_cb(lv_event_t *e) {
+  (void)e;
+  if (g_wxReq || g_wxDone || !g_wifi.isConnected() || g_wxLat == 0) return;
+  g_wxTryMs = millis();
+  g_wxReq = true;
+  if (g_wxWeekBtn) lv_label_set_text(g_wxWeekBtn, TRS("aggiornamento...", "updating..."));
+}
+static void wx_week_close() { if (g_wxWeek) { lv_obj_delete(g_wxWeek); g_wxWeek = nullptr; g_wxWeekBtn = nullptr; } }
 static void wx_week_close_cb(lv_event_t *e) { (void)e; wx_week_close(); }
 static void wx_week_open(lv_event_t *e) {
   (void)e;
@@ -2750,13 +2763,17 @@ static void wx_week_open(lv_event_t *e) {
         lv_obj_set_style_bg_opa(sep, LV_OPA_COVER, 0);
       }
     }
-    char f[64];
-    snprintf(f, sizeof(f), TRS("oggi: %s " U_MIDDOT " sole %s-%s", "today: %s " U_MIDDOT " sun %s-%s"),
-             wx_desc(g_wx.code), g_wx.sunrise, g_wx.sunset);
+    char f[80], at[12] = "";
+    if (g_wxAtMs) fmt_hm((uint32_t)now - (millis() - g_wxAtMs) / 1000, at, sizeof(at));
+    snprintf(f, sizeof(f), TRS("oggi: %s " U_MIDDOT " sole %s-%s " U_MIDDOT " aggiornato %s", "today: %s " U_MIDDOT " sun %s-%s " U_MIDDOT " updated %s"),
+             wx_desc(g_wx.code), g_wx.sunrise, g_wx.sunset, at);
     lv_obj_t *fl = tstatic(s, f, F12, C_MUTED, 10, 236);
     lv_obj_set_width(fl, 460);
     lv_obj_set_style_text_align(fl, LV_TEXT_ALIGN_CENTER, 0);
   }
+  lv_obj_t *rb = tbtn(s, 24, 268, 150, 30, "", F14, C_ACCENT, C_BORDER, wx_refresh_cb, NULL);
+  g_wxWeekBtn = lv_obj_get_child(rb, 0);
+  lv_label_set_text(g_wxWeekBtn, g_wxReq ? TRS("aggiornamento...", "updating...") : TRS(U_REFRESH " aggiorna", U_REFRESH " refresh"));
   tstatic(s, TRS("[ tocca per chiudere ]", "[ tap to close ]"), F12, C_FAINT, 290, 280);
 }
 
@@ -2764,6 +2781,18 @@ static void wx_week_open(lv_event_t *e) {
 static void home_goto_cb(lv_event_t *e) {
   int tile = (int)(intptr_t)lv_event_get_user_data(e);
   if (g_ui.tv) lv_tileview_set_tile_by_index(g_ui.tv, tile, 0, LV_ANIM_ON);
+}
+// Claude al lavoro: legenda del riquadro claude in home; la ✻ della testata gira nel loop
+static void cc_busy_ui() {
+  if (g_ui.hmClLegend) {
+    char s[40];
+    if (g_ccBusyN > 1)       snprintf(s, sizeof(s), TRS("claude " U_MIDDOT " %d al lavoro", "claude " U_MIDDOT " %d working"), g_ccBusyN);
+    else if (g_ccBusyN == 1) strcpy(s, TRS("claude " U_MIDDOT " al lavoro", "claude " U_MIDDOT " working"));
+    else                     strcpy(s, "claude");
+    label_set(g_ui.hmClLegend, s);
+    label_color(g_ui.hmClLegend, g_ccBusyN ? C_ACCENT : C_MUTED);
+  }
+  if (!g_ccBusyN && g_ui.hdrSpark) label_set(g_ui.hdrSpark, U_SPARK " ");   // ferma: di nuovo ✻
 }
 static void build_tile_home(lv_obj_t *t) {
   // griglia aurea: colonna sinistra fino a x 297 (480 / phi), meteo da 310
@@ -2811,7 +2840,7 @@ static void build_tile_home(lv_obj_t *t) {
 
   // centrato tra la riga della data (lettere fino a y 98) e il riquadro pc (y 206): 17 sopra e 17 sotto;
   // righe del metro a passo 30
-  lv_obj_t *b = tbox(t, 13, 115, 454, 74, "claude");
+  lv_obj_t *b = tbox(t, 13, 115, 454, 74, "claude", C_BORDER, &g_ui.hmClLegend);
   lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);                       // -> pagina ora
   lv_obj_add_event_cb(b, home_goto_cb, LV_EVENT_SHORT_CLICKED, (void *)(intptr_t)1);
   const char *k[2] = {"5h", TRS("sett.", "week")};
@@ -2836,6 +2865,7 @@ static void build_tile_home(lv_obj_t *t) {
     g_ui.hmPcVal[i] = mklabel(g_ui.hmPcRow, "--", F14, C_TEXT);
   }
   g_ui.hmPcOff = tlabel(p, F12, C_FAINT, 13, 11);
+  cc_busy_ui();
   lv_obj_set_width(g_ui.hmPcOff, 426);
   lv_label_set_long_mode(g_ui.hmPcOff, LV_LABEL_LONG_DOT);
   home_redraw();
@@ -4031,7 +4061,7 @@ static void ui_main() {
   lv_obj_add_flag(id, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_set_ext_click_area(id, 8);
   lv_obj_add_event_cb(id, logo_cb, LV_EVENT_CLICKED, NULL);
-  mklabel(id, U_SPARK " ", F14, C_ACCENT);
+  g_ui.hdrSpark = mklabel(id, U_SPARK " ", F14, C_ACCENT);
   mklabel(id, "ritmo-code ", F14, C_TEXT);
   g_ui.hdrPath = mklabel(id, "/usage", F14, C_FAINT);
   if (accountCount(g_accts) > 1) {
@@ -5175,6 +5205,7 @@ void loop() {
     g_wxDone = false;
     if (g_wxRes.ok) { g_wx = g_wxRes; g_wxAtMs = millis(); }
     home_redraw();
+    if (g_wxWeek) { wx_week_close(); wx_week_open(nullptr); }
   }
   if (g_pcDone) {
     g_pcDone = false;
@@ -5182,6 +5213,7 @@ void loop() {
     if (g_pc.ok) {
       g_pcAtMs = millis();
       if (g_pc.ccId) cc_event(g_pc.ccId, g_pc.ccEv, g_pc.ccProj, g_pc.ccDur, g_pc.ccAge);
+      if (g_pc.ccBusy != g_ccBusyN) { g_ccBusyN = g_pc.ccBusy; cc_busy_ui(); }
     }
     if (g_pc.ok) {                                   // il grafico avanza a ogni lettura
       g_pcHistAtMs = millis();
@@ -5214,7 +5246,17 @@ void loop() {
     uint32_t now = millis();
     static uint32_t lastTick = 0, lastBar = 0, lastBob = 0, blinkAt = 0;
     static bool blinkClosed = false;
-    if (now - lastTick > 1000) { lastTick = now; dash_tick(); home_tick(); if (g_tmMode) set_hdr_status(); }
+    if (now - lastTick > 1000) {
+      lastTick = now; dash_tick(); home_tick(); if (g_tmMode) set_hdr_status();
+      if (g_ccBusyN && (!g_pcAtMs || now - g_pcAtMs > pc_stale_ms())) { g_ccBusyN = 0; cc_busy_ui(); }
+    }
+    static uint32_t lastSpark = 0;
+    static int sparkK = 4;
+    if (g_ccBusyN > 0 && g_ui.hdrSpark && g_screenMode < 2 && now - lastSpark > 160) {
+      lastSpark = now; sparkK = (sparkK + 1) % 10;
+      char sp[8]; snprintf(sp, sizeof(sp), "%s ", SPIN[sparkK]);
+      label_set(g_ui.hdrSpark, sp);
+    }
     if (now - lastBar > 1000 && g_ui.refBar) {       // filo del refresh: al massimo 1 ridisegno/s
       lastBar = now;
       const int W = 275;

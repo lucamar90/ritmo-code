@@ -28,7 +28,7 @@ import winreg
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP = "ritmo-code-pc-monitor"
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 DEFAULT_PORT = 8765
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "RitmoCodePcMonitor")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
@@ -569,6 +569,8 @@ class ClaudeEvents:
         """Campi per data.json (piatti: il dispositivo ha un parser minimo)."""
         with self.lock:
             now = time.time()
+            if WindowsSensors._claude_sessions() == 0:       # Claude Code chiuso (anche con Esc a meta'): nessuno al lavoro
+                self.working.clear()
             data = {"cc_busy": sum(1 for t in self.working.values() if now - t < self.STALE_S)}
             if self.last:
                 data.update({"cc_ev_id": self.last["id"], "cc_ev": self.last["ev"], "cc_ev_proj": self.last["proj"],
@@ -584,7 +586,9 @@ def push_event(event):
     ip = DEVICE_SEEN["ip"] if DEVICE_SEEN["ip"] and time.time() - DEVICE_SEEN["at"] < 600 else load_config().get("device")
     if not ip:
         return
-    body = urllib.parse.urlencode({k: event[k] for k in ("id", "ev", "proj", "dur")}).encode()
+    fields = {k: event[k] for k in ("id", "ev", "proj", "dur")}
+    fields["busy"] = CLAUDE.fields()["cc_busy"]               # sessioni al lavoro: l'indicatore si aggiorna subito
+    body = urllib.parse.urlencode(fields).encode()
     try:
         urllib.request.urlopen(urllib.request.Request(f"http://{ip}/claude", data=body, method="POST"), timeout=2).close()
     except Exception:
@@ -770,6 +774,8 @@ def make_handler(sampler, lhm, port):
                     DEVICE_SEEN.update(ip=self.client_address[0], at=time.time())
                 data = sampler.snapshot()
                 data.update(CLAUDE.fields())
+                if data.get("claude_sessions", -1) >= 0:          # mai piu' sessioni al lavoro di quelle aperte
+                    data["cc_busy"] = min(data["cc_busy"], data["claude_sessions"])
                 data.update({"app": APP, "version": VERSION})
                 self._send(200, "application/json", json.dumps(data))
             elif path == "/" and self._local():
