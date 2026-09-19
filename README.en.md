@@ -9,7 +9,7 @@ No computer running, no app, no cloud.
 
 [Italiano](README.md) · **English**
 
-<img src="https://img.shields.io/badge/firmware-v3.9.5-D97757?style=for-the-badge" alt="firmware v3.9.5">
+<img src="https://img.shields.io/badge/firmware-v3.9.6-D97757?style=for-the-badge" alt="firmware v3.9.6">
 <img src="https://img.shields.io/badge/ESP32--S3-AXS15231B%20480×320-1B1A18?style=for-the-badge" alt="ESP32-S3 AXS15231B">
 <img src="https://img.shields.io/badge/LVGL-9.2.2-9BC08A?style=for-the-badge" alt="LVGL 9.2.2">
 <img src="https://img.shields.io/badge/accounts-up%20to%204-8E8B82?style=for-the-badge" alt="up to 4 accounts">
@@ -45,7 +45,7 @@ navigation (swipe ← → between pages, no physical button).
 | <img src="assets/screen-alert.png" alt="Threshold alert"> **Threshold alerts** — at 25, 50, 70 and 100% a full-screen animation with Clawd reacting to the level. | <img src="assets/screen-reset.png" alt="Reset alert"> **Reset alert** — when a window that went above 80% becomes available again. |
 | <img src="assets/screen-claude.png" alt="Claude is done"> **Claude Code** — with the hooks installed by the PC Monitor, Clawd tells you when Claude has finished (and how long it took) or needs a permission. It stays until you tap it or write to Claude again. | <img src="assets/screen-pomodoro.png" alt="Pomodoro"> **Timer and pomodoro** — tap the clock or the tomato on the home page: pomodoro 25/5, 50/10 or 15/3, or a 5 to 30-minute timer. Countdown under the clock, alert at the end of each phase, today's pomodoros. |
 | <img src="assets/screen-night.png" alt="Night clock"> **Night clock** — at night, after 30 seconds without touches, a full-screen clock in warm grey with date, 5-hour and weekly usage and upcoming rain. Dim or very dim; alternatively the screen turns off. | <img src="assets/screen-info.png" alt="Info"> **Info** — firmware version, hardware and credits. |
-| <img src="assets/screen-pause.png" alt="Timed pause"> **Pause requests** — the ❚❚ button in the header stops requests; a long press offers 30 min, 1 hour, until 7:00 or no limit. | <img src="assets/screen-settings.png" alt="Settings"> **Settings** — in five groups: **claude** (interval, accounts, models, token), **alerts** (Claude Code, sounds on pc, reset), **screen** (brightness, night mode and night clock, dimming, home, slideshow), **network and pc** (Wi-Fi, address, pc interval) and **system** (language, timezone, firmware update, info). |
+| <img src="assets/screen-pause.png" alt="Timed pause"> **Pause requests** — the ❚❚ button in the header stops requests; a long press offers 30 min, 1 hour, until 7:00 or no limit. | <img src="assets/screen-settings.png" alt="Settings"> **Settings** — in five groups: **claude** (interval, accounts, models, token), **alerts** (Claude Code, sounds on pc, reset), **screen** (brightness, night mode and night clock, dimming, home, slideshow), **network and pc** (Wi-Fi, address, pc interval) and **system** (language, timezone, firmware update, info; *erase everything* needs two taps and the PIN). |
 
 > Double-tap **✻ ritmo-code** at the top to reopen the last alert (Claude, timer, pomodoro or threshold).
 

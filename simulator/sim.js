@@ -16,7 +16,7 @@ const C = {
   BORDER: '#3A3834', TEXT: '#E8E6DF', MUTED: '#8E8B82', FAINT: '#5C5A55', ACCENT: '#D97757',
   OK: '#9BC08A', WARN: '#E0B25A', BAD: '#E06C5A', BLUE: '#7DB9D6', LILAC: '#B7A6E0',
 };
-const CFG = { PIN_LEN: 4, MAX_PIN_ATTEMPTS: 10, LOCKOUT_BASE_SEC: 60, ACCT_MAX: 4, FW: '3.9.5' };
+const CFG = { PIN_LEN: 4, MAX_PIN_ATTEMPTS: 10, LOCKOUT_BASE_SEC: 60, ACCT_MAX: 4, FW: '3.9.6' };
 const DEMO_PIN = '1234';
 
 const $ = (id) => document.getElementById(id);
@@ -1728,7 +1728,7 @@ function uiSettings() {
     kvRow(lst, TRS('contatore fps', 'fps counter'), P.perf ? TRS('acceso', 'on') : TRS('spento', 'off'), (v) => { P.perf = !P.perf; setText(v, P.perf ? TRS('acceso', 'on') : TRS('spento', 'off')); });
     kvRow(lst, TRS('cancella tutto', 'erase everything'), '', (v) => {
       if (!G.wipeArmed) { G.wipeArmed = true; setText(v, TRS('tocca ancora', 'tap again'), C.BAD); }
-      else { G.wipeArmed = false; factoryReset(); requestState(ST.WIFI); }
+      else { G.wipeArmed = false; if (prompt(TRS('PIN per cancellare tutto', 'PIN to erase everything')) === (G.userPin || DEMO_PIN)) { factoryReset(); requestState(ST.WIFI); } else slog('[SIM] PIN errato: niente cancellato'); }
     }, { color: C.BAD, valColor: C.BAD });
   }
 }

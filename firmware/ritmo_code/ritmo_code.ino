@@ -235,6 +235,7 @@ static char g_sessionPin[PIN_LEN + 1] = {0};
 static int  g_tokenTargetSlot = 0;
 static char g_pendingLabel[ACCT_LBL_MAX] = {0};
 static char g_pinEntry[PIN_LEN + 1] = {0};   // cifre in digitazione
+static bool g_pinForWipe = false;            // schermata PIN aperta per confermare "cancella tutto"
 static char g_pinFirst[PIN_LEN + 1] = {0};   // 1° inserimento nel setup del PIN
 static bool g_pinConfirming = false;         // setup: conferma (2° inserimento)
 static int  g_pinAttempts = 0;               // tentativi errati (persistito)
@@ -1107,6 +1108,25 @@ static void pin_submit() {
     return;
   }
 
+  // conferma di "cancella tutto": serve il PIN di questa sessione
+  if (g_pinForWipe) {
+    char tmp[sizeof(g_token)];
+    bool ok = g_sessionPin[0] ? strcmp(g_pinEntry, g_sessionPin) == 0
+                              : decryptToken(g_blob, g_pinEntry, tmp, sizeof(tmp));
+    memset(tmp, 0, sizeof(tmp));
+    memset(g_pinEntry, 0, sizeof(g_pinEntry));
+    if (ok) {
+      Serial.println("[PIN] cancella tutto confermato");
+      g_pinForWipe = false;
+      factory_reset();
+      request_state(ST_WIFI);
+    } else {
+      pin_update_dots();
+      if (g_pinMsg) { lv_label_set_text(g_pinMsg, TRS("PIN errato: niente cancellato", "Wrong PIN: nothing erased")); }
+    }
+    return;
+  }
+
   // ST_PIN: prova a decifrare
   if (decryptToken(g_blob, g_pinEntry, g_token, sizeof(g_token))) {
     g_pinAttempts = 0; save_attempts();
@@ -1157,10 +1177,17 @@ static void pin_kb_cb(lv_event_t *e) {
   }
 }
 
+static void wipe_cancel_cb(lv_event_t *e) {
+  (void)e;
+  g_pinForWipe = false;
+  memset(g_pinEntry, 0, sizeof(g_pinEntry));
+  request_state(ST_SETTINGS);
+}
 static void ui_pin() {
   lv_obj_t *scr = lv_screen_active();
   const char *title = (g_state == ST_SETUP_PIN)
     ? (g_pinConfirming ? TRS("conferma il PIN", "confirm the PIN") : TRS("imposta un PIN", "set a PIN"))
+    : g_pinForWipe ? TRS("PIN per cancellare tutto", "PIN to erase everything")
     : TRS("inserisci il PIN", "enter the PIN");
   lv_obj_t *r = plain_obj(scr);
   lv_obj_set_size(r, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
@@ -1175,8 +1202,11 @@ static void ui_pin() {
 
   const char *sub = (g_state == ST_SETUP_PIN)
     ? TRS("lo inserirai a ogni avvio", "you'll type it on every boot")
+    : g_pinForWipe ? TRS("token, account, reti e storico verranno cancellati", "token, accounts, networks and history will be erased")
     : TRS("serve per sbloccare il token", "needed to unlock the token");
-  g_pinMsg = mklabel(scr, sub, F12, C_MUTED);
+  g_pinMsg = mklabel(scr, sub, F12, g_pinForWipe ? C_BAD : C_MUTED);
+  if (g_pinForWipe)                               // si torna alle impostazioni senza cancellare
+    tbtn(scr, 378, 5, 89, 32, TRS(U_LEFT " annulla", U_LEFT " cancel"), F14, C_MUTED, C_BORDER, wipe_cancel_cb, NULL);
   lv_obj_align(g_pinMsg, LV_ALIGN_TOP_MID, 0, 80);
 
   lv_obj_t *bm = lv_buttonmatrix_create(scr);
@@ -4409,10 +4439,11 @@ static void settings_action_cb(lv_event_t *e) {
       if (!g_wipeArmed) {
         g_wipeArmed = true;
         if (g_wipeLbl) lv_label_set_text(g_wipeLbl, TRS("tocca ancora", "tap again"));
-      } else {
+      } else {                                         // secondo tocco: conferma con il PIN
         g_wipeArmed = false;
-        factory_reset();
-        request_state(ST_WIFI);
+        g_pinForWipe = true;
+        memset(g_pinEntry, 0, sizeof(g_pinEntry));
+        request_state(ST_PIN);
       }
       break;
     case 5: request_state(ST_MAIN); break;             // indietro
