@@ -895,6 +895,12 @@ function heatBtnStyle() {
 }
 function buildTileHeat(t) {
   const b = tbox(t, 13, 14, 454, 230, TRS('ritmo orario', 'hourly rhythm'));
+  UI.heatTab = ['claude', 'pomodoro'].map((n, i) => {
+    const btn = tbtn(b, n, i ? 84 : 66, 26, () => { if (i === (P.heats || 0)) return; P.heats = i; heatTabStyle(); heatRedraw(); }, { size: 12 });
+    btn.style.left = (i ? 84 : 12) + 'px'; btn.style.top = '12px';
+    return btn;
+  });
+  heatTabStyle();
   UI.heatBtn = [0, 1, 2, 3].map((i) => {
     const btn = tbtn(b, '', 60, 26, () => { if (i === P.heatm) return; P.heatm = i; heatBtnStyle(); heatRedraw(); }, { size: 12 });
     btn.style.left = (180 + i * 66) + 'px'; btn.style.top = '12px';
@@ -904,17 +910,36 @@ function buildTileHeat(t) {
   UI.heat = Array.from({ length: 24 }, (_, h) => obj(b, 14 + h * 18, 166, 14, 2, { background: C.ACCENT }));
   obj(b, 14, 168, 428, 1, { background: C.BORDER });
   for (const h of [0, 6, 12, 18, 23]) label(b, `${h}h`, 10, C.FAINT, 12 + h * 18, 174);
-  boxCaption(b, `${GT} ${TRS('quota 5h consumata per ora locale', '5h quota burned per local hour')}`);
+  UI.heatCap = boxCaption(b, `${GT} ${TRS('quota 5h consumata per ora locale', '5h quota burned per local hour')}`);
+}
+function heatTabStyle() {
+  (UI.heatTab || []).forEach((btn, i) => {
+    const on = i === (P.heats || 0), c = i ? C.BAD : C.ACCENT;
+    btn.style.borderColor = on ? c : C.BORDER; btn.style.color = on ? c : C.MUTED;
+    btn.style.background = on ? mix(c, C.BG, 40) : 'transparent';
+  });
+}
+// pomodori completati per ora (dati di esempio nel simulatore)
+const POMO_HIST = { 0: [0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0] };
+function pomoModeData(mode) {
+  const today = POMO_HIST[0], k = [1, 5, 18, 40][mode];
+  return today.map((v, h) => Math.round(v * k + (mode ? [0, 0, 0, 0, 0, 0, 0, 0, 1, 3, 4, 3, 1, 1, 3, 4, 3, 2, 1, 0, 0, 0, 0, 0][h] * k / 3 : 0)));
 }
 function heatRedraw() {
   if (!UI.heat) return;
-  const data = heatModeData(P.heatm);
+  const pomo = (P.heats || 0) === 1;
+  const data = pomo ? pomoModeData(P.heatm) : heatModeData(P.heatm);
+  if (UI.heatCap) {
+    const tot = data.reduce((a, v) => a + v, 0), per = [TRS('oggi', 'today'), TRS('negli ultimi 7 giorni', 'in the last 7 days'), TRS('negli ultimi 30 giorni', 'in the last 30 days'), TRS('da sempre', 'all time')][P.heatm];
+    UI.heatCap.innerHTML = pomo ? `${GT} ${tot} ${tot === 1 ? 'pomodoro' : TRS('pomodori', 'pomodoros')} ${per}, ${TRS('per ora locale', 'per local hour')}`
+      : `${GT} ${TRS('quota 5h consumata per ora locale', '5h quota burned per local hour')}`;
+  }
   const mx = Math.max(1, ...data), cur = localParts(nowEpoch()).h;
   UI.heat.forEach((bar, h) => {
     const r = clamp(data[h] / mx, 0, 1), hgt = 2 + Math.floor(r * 116);
     bar.style.height = hgt + 'px'; bar.style.top = (168 - hgt) + 'px';
     // colore gia' fuso con lo sfondo (niente trasparenza da calcolare)
-    bar.style.background = h === cur ? C.TEXT : mix(C.ACCENT, C.BG, 70 + Math.floor(r * 185));
+    bar.style.background = h === cur ? C.TEXT : mix(pomo ? C.BAD : C.ACCENT, C.BG, 70 + Math.floor(r * 185));
   });
 }
 
@@ -1296,15 +1321,16 @@ function shadeOpen(anim) {
   p.addEventListener('click', (e) => e.stopPropagation());
   if (anim) { p.style.top = -H + 'px'; requestAnimationFrame(() => requestAnimationFrame(() => { p.style.top = '0px'; })); }
   const bri = [TRS('bassa', 'low'), TRS('media', 'medium'), TRS('alta', 'high')][P.bri];
+  const tl = TM.mode ? `${pad2(Math.floor(tmLeft() / 60))}:${pad2(tmLeft() % 60)}` : TRS('spento', 'off');
   const Q = [
-    [P.pause ? TRS('riprendi', 'resume') : TRS('pausa', 'pause'), P.pause ? C.WARN : C.TEXT, () => pauseSet(!P.pause, 0)],
-    [TM.mode ? TRS('timer · in corso', 'timer · on') : 'timer', TM.mode ? tmColor() : C.TEXT, () => { shadeClose(); tmMenuOpen(); return true; }],
-    [TRS(`luce ${bri}`, `light ${bri}`), C.TEXT, () => { P.bri = (P.bri + 1) % 3; applyBrightness(); }],
-    [P.pcsnd ? TRS('suoni pc sì', 'pc sound on') : TRS('suoni pc no', 'pc sound off'), P.pcsnd ? C.TEXT : C.MUTED, () => { P.pcsnd = !P.pcsnd; }],
+    [TRS('richieste', 'requests'), P.pause ? TRS('in pausa', 'paused') : TRS('attive', 'active'), P.pause ? C.WARN : C.OK, () => pauseSet(!P.pause, 0)],
+    ['timer', tl, TM.mode ? tmColor() : C.MUTED, () => { shadeClose(); tmMenuOpen(); return true; }],
+    [TRS('luce', 'light'), bri, C.ACCENT, () => { P.bri = (P.bri + 1) % 3; applyBrightness(); }],
+    [TRS('suoni pc', 'pc sound'), P.pcsnd ? TRS('sì', 'on') : 'no', P.pcsnd ? C.OK : C.MUTED, () => { P.pcsnd = !P.pcsnd; }],
   ];
-  Q.forEach(([t, c, fn], i) => {
-    const bt = tbtn(p, t, 104, 44, () => { if (!fn()) shadeOpen(false); }, { color: c, size: 12 });
-    bt.style.left = (20 + i * 112) + 'px'; bt.style.top = '12px';
+  Q.forEach(([name, st, c, fn], i) => {
+    const bt = tbtn(p, `<span style="font-size:14px">${name}</span><br><span style="font-size:12px;color:${c}">${st}</span>`, 104, 44, () => { if (!fn()) shadeOpen(false); }, { size: 12 });
+    bt.style.left = (20 + i * 112) + 'px'; bt.style.top = '12px'; bt.style.lineHeight = '1.25';
   });
   label(p, TRS('ultimi avvisi', 'recent alerts'), 12, C.MUTED, 20, 70);
   if (!AL.length) label(p, TRS('nessun avviso recente', 'no recent alerts'), 14, C.FAINT, 20, 96);

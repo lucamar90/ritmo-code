@@ -263,6 +263,7 @@ static uint32_t g_lastPollMs = 0;         // millis dell'ultimo poll (per la bar
 static int g_pollSec = DEFAULT_POLL_SEC;  // intervallo di aggiornamento (config, NVS)
 static int g_tzOffset = TZ_ROME;          // fuso: TZ_ROME (ora legale auto) o offset GMT fisso, NVS
 static int g_slideSec = 0;                // slideshow: 0=off, 5/10/15/30s (config, NVS)
+static int g_heatSrc = 0;                 // pagina ritmo: 0 claude, 1 pomodoro (NVS "heats")
 static int g_heatMode = 3;                // 0=oggi 1=7g 2=30g 3=tutto (config, NVS)
 static bool g_resetAlert = true;          // avviso quando una finestra oltre l'80% si libera (NVS "rstal")
 static bool g_pcSound = true;             // suoni e notifiche sul PC per gli avvisi (NVS "pcsnd")
@@ -375,7 +376,7 @@ struct DashUI {
   // finestra 5h
   lv_obj_t *trHist, *trProj, *trDot, *trCap, *trT0, *trT1;
   // ritmo
-  lv_obj_t *heat[24], *heatBtn[4];
+  lv_obj_t *heat[24], *heatBtn[4], *heatTab[2], *heatCap;
   // settimane
   lv_obj_t *wkBar[8], *wkVal[8], *wkDate[8], *wkCap;
   // home
@@ -878,6 +879,7 @@ static void load_persisted() {
   if (g_slideSec != 0 && g_slideSec != 5 && g_slideSec != 10 &&
       g_slideSec != 15 && g_slideSec != 30) g_slideSec = 0;
   g_heatMode = g_prefs.getInt("heatm", 3);
+  g_heatSrc = g_prefs.getInt("heats", 0) ? 1 : 0;
   g_perfOn = g_prefs.getBool("perf", false);
   g_resetAlert = g_prefs.getBool("rstal", true);
   g_pomoToday = g_prefs.getInt("pomn", 0);
@@ -2151,6 +2153,66 @@ static void accumulate_heat(float h5) {
   g_lastH5 = h5;
 }
 
+// ---- Pomodori completati per ora del giorno (tutti gli account: /pomo.bin) ----
+struct PomoDay { uint32_t day; uint8_t h[24]; };
+#define POMO_MAGIC 0xC1A0DE10
+static PomoDay g_pomoDays[NDAYS];
+static int g_pomoDayN = 0;
+static uint16_t g_pomoAll[24];                 // da sempre
+static void pomo_save() {
+  File f = LittleFS.open("/pomo.bin", "w");
+  if (!f) return;
+  uint32_t m = POMO_MAGIC;
+  f.write((uint8_t *)&m, 4);
+  f.write((uint8_t *)&g_pomoDayN, sizeof(g_pomoDayN));
+  f.write((uint8_t *)g_pomoDays, sizeof(g_pomoDays));
+  f.write((uint8_t *)g_pomoAll, sizeof(g_pomoAll));
+  f.close();
+}
+static void pomo_load() {
+  File f = LittleFS.open("/pomo.bin", "r");
+  if (!f) return;
+  uint32_t m = 0;
+  if (f.read((uint8_t *)&m, 4) == 4 && m == POMO_MAGIC &&
+      f.read((uint8_t *)&g_pomoDayN, sizeof(g_pomoDayN)) == sizeof(g_pomoDayN) &&
+      f.read((uint8_t *)g_pomoDays, sizeof(g_pomoDays)) == sizeof(g_pomoDays) &&
+      f.read((uint8_t *)g_pomoAll, sizeof(g_pomoAll)) == sizeof(g_pomoAll)) {
+    if (g_pomoDayN < 0 || g_pomoDayN > NDAYS) g_pomoDayN = 0;
+  } else {
+    g_pomoDayN = 0; memset(g_pomoAll, 0, sizeof(g_pomoAll));
+  }
+  f.close();
+}
+// un pomodoro completato adesso: ora locale del giorno di oggi
+static void pomo_record() {
+  time_t now = time(nullptr);
+  if (now < 1000000000L) return;
+  struct tm tv; localtime_r(&now, &tv);
+  uint32_t dk = day_key();
+  int i = -1;
+  for (int k = 0; k < g_pomoDayN; k++) if (g_pomoDays[k].day == dk) i = k;
+  if (i < 0) {
+    if (g_pomoDayN == NDAYS) { memmove(&g_pomoDays[0], &g_pomoDays[1], sizeof(PomoDay) * (NDAYS - 1)); g_pomoDayN--; }
+    i = g_pomoDayN++;
+    g_pomoDays[i].day = dk;
+    memset(g_pomoDays[i].h, 0, 24);
+  }
+  if (g_pomoDays[i].h[tv.tm_hour] < 255) g_pomoDays[i].h[tv.tm_hour]++;
+  if (g_pomoAll[tv.tm_hour] < 65535) g_pomoAll[tv.tm_hour]++;
+  pomo_save();
+}
+static void pomo_mode_data(int mode, float out[24]) {
+  memset(out, 0, sizeof(float) * 24);
+  if (mode == 3) { for (int h = 0; h < 24; h++) out[h] = g_pomoAll[h]; return; }
+  uint32_t today = day_key();
+  if (!today) return;
+  uint32_t minDay = (mode == 0) ? today : (mode == 1) ? today - 6 : today - 29;
+  for (int i = 0; i < g_pomoDayN; i++) {
+    if (g_pomoDays[i].day < minDay || g_pomoDays[i].day > today) continue;
+    for (int h = 0; h < 24; h++) out[h] += g_pomoDays[i].h[h];
+  }
+}
+
 // somma l'heatmap secondo il periodo scelto (0=oggi 1=7g 2=30g 3=tutto)
 static void heat_mode_data(int mode, float out[24]) {
   memset(out, 0, sizeof(float) * 24);
@@ -2718,6 +2780,27 @@ static void heat_btn_style() {
     if (l) { lv_label_set_text(l, names[i]); lv_obj_set_style_text_color(l, lv_color_hex(on ? C_ACCENT : C_MUTED), 0); }
   }
 }
+static void heat_tab_style() {
+  const char *names[2] = {"claude", "pomodoro"};
+  for (int i = 0; i < 2; i++) {
+    if (!g_ui.heatTab[i]) continue;
+    bool on = (i == g_heatSrc);
+    uint32_t c = i ? C_BAD : C_ACCENT;                      // pomodoro: rosso pomodoro
+    lv_obj_set_style_border_color(g_ui.heatTab[i], lv_color_hex(on ? c : C_BORDER), 0);
+    lv_obj_set_style_bg_color(g_ui.heatTab[i], lv_color_mix(lv_color_hex(c), lv_color_hex(C_BG), 40), 0);
+    lv_obj_set_style_bg_opa(g_ui.heatTab[i], on ? LV_OPA_COVER : 0, 0);
+    lv_obj_t *l = lv_obj_get_child(g_ui.heatTab[i], 0);
+    if (l) { lv_label_set_text(l, names[i]); lv_obj_set_style_text_color(l, lv_color_hex(on ? c : C_MUTED), 0); }
+  }
+}
+static void heat_tab_cb(lv_event_t *e) {
+  int t = (int)(intptr_t)lv_event_get_user_data(e);
+  if (t == g_heatSrc) return;
+  g_heatSrc = t;
+  g_prefs.putInt("heats", t);
+  heat_tab_style();
+  heat_redraw();
+}
 static void heat_btn_cb(lv_event_t *e) {
   int m = (int)(intptr_t)lv_event_get_user_data(e);
   if (m == g_heatMode) return;
@@ -2728,6 +2811,9 @@ static void heat_btn_cb(lv_event_t *e) {
 }
 static void build_tile_heat(lv_obj_t *t) {
   lv_obj_t *b = tbox(t, 13, 20, 454, 226, TRS("ritmo orario", "hourly rhythm"));
+  g_ui.heatTab[0] = tbtn(b, 12, 12, 66, 26, "", F12, C_MUTED, C_BORDER, heat_tab_cb, (void *)(intptr_t)0);
+  g_ui.heatTab[1] = tbtn(b, 84, 12, 84, 26, "", F12, C_MUTED, C_BORDER, heat_tab_cb, (void *)(intptr_t)1);
+  heat_tab_style();
   for (int i = 0; i < 4; i++)
     g_ui.heatBtn[i] = tbtn(b, 180 + i * 66, 12, 60, 26, "", F12, C_MUTED, C_BORDER, heat_btn_cb, (void *)(intptr_t)i);
   heat_btn_style();
@@ -2738,7 +2824,8 @@ static void build_tile_heat(lv_obj_t *t) {
     char s[4]; snprintf(s, sizeof(s), "%dh", ticks[i]);
     tstatic(b, s, F12, C_FAINT, 12 + ticks[i] * 18, HEAT_BASE + 4);
   }
-  box_caption(b, TRS("quota 5h consumata per ora locale", "5h quota burned per local hour"));
+  g_ui.heatCap = box_caption(b, TRS("quota 5h consumata per ora locale", "5h quota burned per local hour"));
+  heat_redraw();
 }
 
 // Tile 0 — HOME: ora, meteo, riepilogo Claude e PC collegato
@@ -3454,7 +3541,21 @@ static void trend_redraw() {
 static void heat_redraw() {
   if (!g_ui.heat[0]) return;
   float data[24];
-  heat_mode_data(g_heatMode, data);
+  bool pomo = g_heatSrc == 1;
+  if (pomo) pomo_mode_data(g_heatMode, data); else heat_mode_data(g_heatMode, data);
+  if (g_ui.heatCap) {
+    if (pomo) {
+      static const char *PER_IT[4] = {"oggi", "negli ultimi 7 giorni", "negli ultimi 30 giorni", "da sempre"};
+      static const char *PER_EN[4] = {"today", "in the last 7 days", "in the last 30 days", "all time"};
+      int tot = 0; for (int h = 0; h < 24; h++) tot += (int)data[h];
+      char c[80];
+      snprintf(c, sizeof(c), TRS("%d %s %s, per ora locale", "%d %s %s, per local hour"), tot,
+               tot == 1 ? "pomodoro" : TRS("pomodori", "pomodoros"), g_lang ? PER_EN[g_heatMode] : PER_IT[g_heatMode]);
+      label_set(g_ui.heatCap, c);
+    } else {
+      label_set(g_ui.heatCap, TRS("quota 5h consumata per ora locale", "5h quota burned per local hour"));
+    }
+  }
   float mx = 1.0f;
   for (int h = 0; h < 24; h++) if (data[h] > mx) mx = data[h];
   int curHour = -1; time_t now = time(nullptr);
@@ -3467,7 +3568,7 @@ static void heat_redraw() {
     lv_obj_set_y(g_ui.heat[h], HEAT_BASE - hgt);
     lv_obj_set_style_bg_color(g_ui.heat[h],
         h == curHour ? lv_color_hex(C_TEXT)
-                     : lv_color_mix(lv_color_hex(C_ACCENT), lv_color_hex(C_BG), (uint8_t)(70 + (int)(r * 185))), 0);
+                     : lv_color_mix(lv_color_hex(pomo ? C_BAD : C_ACCENT), lv_color_hex(C_BG), (uint8_t)(70 + (int)(r * 185))), 0);
   }
 }
 
@@ -3706,10 +3807,31 @@ struct AlertRec { uint32_t at; bool moment; int8_t win, thr; uint8_t peak; Notic
 #define AL_MAX 5
 static AlertRec g_al[AL_MAX];                  // [0] = il piu' recente
 static int g_alN = 0;
+#define AL_SAVED 3                             // quanti sopravvivono al riavvio
+#define AL_MAGIC 0xC1A0DE20
+static void al_save() {
+  File f = LittleFS.open("/alerts.bin", "w");
+  if (!f) return;
+  uint32_t m = AL_MAGIC; int n = g_alN < AL_SAVED ? g_alN : AL_SAVED;
+  f.write((uint8_t *)&m, 4);
+  f.write((uint8_t *)&n, sizeof(n));
+  f.write((uint8_t *)g_al, sizeof(AlertRec) * n);
+  f.close();
+}
+static void al_load() {
+  File f = LittleFS.open("/alerts.bin", "r");
+  if (!f) return;
+  uint32_t m = 0; int n = 0;
+  if (f.read((uint8_t *)&m, 4) == 4 && m == AL_MAGIC && f.read((uint8_t *)&n, sizeof(n)) == sizeof(n) &&
+      n >= 0 && n <= AL_SAVED && f.read((uint8_t *)g_al, sizeof(AlertRec) * n) == sizeof(AlertRec) * n)
+    g_alN = n;
+  f.close();
+}
 static void al_push(const AlertRec &r) {
   memmove(&g_al[1], &g_al[0], sizeof(AlertRec) * (AL_MAX - 1));
   g_al[0] = r;
   if (g_alN < AL_MAX) g_alN++;
+  al_save();
 }
 static bool g_ntReplay = false;                // riaperto dall'utente: niente suono sul PC
 static void notice_show(const NoticeText &n) {
@@ -3947,7 +4069,7 @@ static void tm_tick() {
   if (g_tmMode == TM_TIMER) {
     g_tmNotice = TN_TIMER; g_tmMode = TM_OFF;
   } else if (g_tmMode == TM_FOCUS) {
-    g_pomoN++; pomo_count();
+    g_pomoN++; pomo_count(); pomo_record();
     g_tmNotice = TN_BREAK;
     tm_start(TM_BREAK, g_pomoN >= POMO_CYCLE ? POMO_LONG_S : POMO_SHORT_S);
   } else if (g_pomoN >= POMO_CYCLE) {          // fine della pausa lunga: ciclo finito
@@ -4198,8 +4320,24 @@ static void al_line(int i, char *out, size_t sz, uint32_t *col) {
 }
 
 // ---- Pannello a tendina: comandi rapidi e ultimi avvisi ----
-static lv_obj_t *g_shadePanel = nullptr;
-static void shade_close() { if (g_shade) { lv_obj_delete(g_shade); g_shade = nullptr; g_shadePanel = nullptr; } }
+static lv_obj_t *g_shadePanel = nullptr, *g_shadeTm = nullptr;   // g_shadeTm: tempo del timer, aggiornato ogni secondo
+static void shade_close() { if (g_shade) { lv_obj_delete(g_shade); g_shade = nullptr; g_shadePanel = nullptr; g_shadeTm = nullptr; } }
+// pulsante del pannello: nome sopra, stato sotto (nel colore dello stato)
+static lv_obj_t *shade_btn(lv_obj_t *p, int x, const char *name, const char *state, uint32_t stCol, lv_event_cb_t cb, void *ud) {
+  lv_obj_t *b = tbtn(p, x, 12, 104, 44, "", F12, C_TEXT, C_BORDER, cb, ud);
+  lv_obj_t *n = lv_obj_get_child(b, 0);
+  lv_label_set_text(n, name);
+  lv_obj_set_style_text_font(n, F14, 0);
+  lv_obj_align(n, LV_ALIGN_TOP_MID, 0, 4);
+  lv_obj_t *st = mklabel(b, state, F12, stCol);
+  lv_obj_align(st, LV_ALIGN_BOTTOM_MID, 0, -4);
+  return st;
+}
+static void shade_timer_text(char *out, size_t sz) {
+  if (!g_tmMode) { strlcpy(out, TRS("spento", "off"), sz); return; }
+  uint32_t l = tm_left_s();
+  snprintf(out, sz, "%02u:%02u", (unsigned)(l / 60), (unsigned)(l % 60));
+}
 static void shade_open(bool anim);
 static void shade_cb(lv_event_t *e) {
   int a = (int)(intptr_t)lv_event_get_user_data(e);
@@ -4233,17 +4371,14 @@ static void shade_open(bool anim) {
   lv_obj_set_style_border_width(p, 1, 0);
   lv_obj_set_style_border_color(p, lv_color_hex(C_BORDER), 0);
   lv_obj_add_flag(p, LV_OBJ_FLAG_CLICKABLE);                   // i tocchi sul pannello non chiudono
-  // comandi rapidi
-  char bl[20];
-  snprintf(bl, sizeof(bl), TRS("luce %s", "light %s"), bri_label());
-  struct { const char *t; uint32_t c; } Q[4] = {
-    {g_userPause ? TRS("riprendi", "resume") : TRS("pausa", "pause"), g_userPause ? C_WARN : C_TEXT},
-    {g_tmMode ? TRS("timer " U_MIDDOT " in corso", "timer " U_MIDDOT " on") : "timer", g_tmMode ? tm_color() : C_TEXT},
-    {bl, C_TEXT},
-    {g_pcSound ? TRS("suoni pc s\xC3\xAC", "pc sound on") : TRS("suoni pc no", "pc sound off"), g_pcSound ? C_TEXT : C_MUTED},
-  };
-  for (int i = 0; i < 4; i++)
-    tbtn(p, 20 + i * 112, 12, 104, 44, Q[i].t, F12, Q[i].c, C_BORDER, shade_cb, (void *)(intptr_t)(i + 1));
+  // comandi rapidi: nome sopra, stato sotto
+  shade_btn(p, 20, TRS("richieste", "requests"), g_userPause ? TRS("in pausa", "paused") : TRS("attive", "active"),
+            g_userPause ? C_WARN : C_OK, shade_cb, (void *)(intptr_t)1);
+  char tt[12]; shade_timer_text(tt, sizeof(tt));
+  g_shadeTm = shade_btn(p, 132, "timer", tt, g_tmMode ? tm_color() : C_MUTED, shade_cb, (void *)(intptr_t)2);
+  shade_btn(p, 244, TRS("luce", "light"), bri_label(), C_ACCENT, shade_cb, (void *)(intptr_t)3);
+  shade_btn(p, 356, TRS("suoni pc", "pc sound"), g_pcSound ? TRS("s\xC3\xAC", "on") : "no", g_pcSound ? C_OK : C_MUTED,
+            shade_cb, (void *)(intptr_t)4);
   tstatic(p, TRS("ultimi avvisi", "recent alerts"), F12, C_MUTED, 20, 70);
   if (!g_alN) tstatic(p, TRS("nessun avviso recente", "no recent alerts"), F14, C_FAINT, 20, 96);
   for (int i = 0; i < g_alN; i++) {
@@ -5475,6 +5610,8 @@ void setup() {
       Serial.printf("[HIST] migrazione multi-account: %s\n", ok ? "ok" : "FALLITA");
     }
     load_history();
+    pomo_load();
+    al_load();
   }
 
   g_wifi.begin();
@@ -5634,6 +5771,7 @@ void loop() {
     static bool blinkClosed = false;
     if (now - lastTick > 1000) {
       lastTick = now; dash_tick(); home_tick(); if (g_tmMode) set_hdr_status();
+      if (g_shadeTm) { char tt[12]; shade_timer_text(tt, sizeof(tt)); label_set(g_shadeTm, tt); }
       if (g_ccBusyN && (!g_pcAtMs || now - g_pcAtMs > pc_stale_ms())) { g_ccBusyN = 0; cc_busy_ui(); }
     }
     static uint32_t lastSpark = 0;
