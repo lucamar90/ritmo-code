@@ -73,3 +73,7 @@ bool postPcNotify(const char* host, const char* ev, const char* title, const cha
 // aggiornamento del firmware dalle release di GitHub (GITHUB_REPO in config.h)
 bool fetchLatestRelease(char* tag, size_t tagSz, char* url, size_t urlSz);
 bool installFromUrl(const char* url, void (*progress)(int pct), String& err);
+
+// eventi del calendario per le viste giorno/settimana/mese (GET http://<pc>/calendar.json)
+struct CalItem { uint32_t s, e; uint8_t allday; char title[45]; };
+int fetchCalRange(const char* host, CalItem* out, int max);   // voci lette, -1 errore

@@ -440,6 +440,9 @@ static int g_calAlIdx = 1;                   // avviso calendario: 0 spento, 1/2
 static const uint8_t CAL_AL_MIN[4] = {0, 5, 10, 15};
 static uint32_t g_calAlerted = 0;            // inizio dell'ultimo evento gia' avvisato
 static CalEv g_calNotice;                    // evento dell'avviso a schermo
+#define CAL_ALL_MAX 120
+static CalItem *g_calTmp = nullptr;            // download del task extra, copiato nel loop
+static int g_tmMenuMode = 0;                  // menu del timer: 0 tutto, 1 solo pomodoro, 2 solo timer
 static bool g_ccFocusDefer = false;          // avvisi di Claude durante il focus: rimandati alla pausa (NVS "ccfocus")
 static bool g_ccDeferred = false;            // un avviso di Claude aspetta la fine del focus
 static bool tm_action(int opt);               // comandi del timer (menu del dispositivo e PC)
@@ -3016,6 +3019,188 @@ static void wx_week_open(lv_event_t *e) {
   tstatic(s, TRS("[ tocca per chiudere ]", "[ tap to close ]"), F12, C_FAINT, 290, 280);
 }
 
+// ---- Calendario a viste (giorno / settimana / mese): eventi chiesti al PC Monitor quando si apre ----
+static CalItem *g_calAll = nullptr;            // in PSRAM (CAL_ALL_MAX voci)
+static int g_calAllN = -1;                     // -1 = mai scaricati
+static uint32_t g_calAllAtMs = 0;
+static volatile bool g_calAllReq = false, g_calAllDone = false;
+static volatile int g_calAllRes = 0;           // voci arrivate dall'ultimo download (-1 errore)
+static lv_obj_t *g_calView = nullptr;
+static int g_calMode = 0;                      // 0 giorno, 1 settimana, 2 mese
+static time_t g_calSel = 0;                    // giorno scelto (mezzanotte locale)
+static int g_calMonthOfs = 0;                  // mese mostrato rispetto al mese del giorno scelto
+
+static time_t day_start(time_t t) {
+  struct tm tv; localtime_r(&t, &tv);
+  tv.tm_hour = 0; tv.tm_min = 0; tv.tm_sec = 0; tv.tm_isdst = -1;
+  return mktime(&tv);
+}
+static time_t day_add(time_t d, int n) {        // +n giorni a mezzanotte (anche con il cambio dell'ora)
+  struct tm tv; localtime_r(&d, &tv);
+  tv.tm_mday += n; tv.tm_hour = 0; tv.tm_min = 0; tv.tm_sec = 0; tv.tm_isdst = -1;
+  return mktime(&tv);
+}
+static void cal_view_close() { if (g_calView) { lv_obj_delete(g_calView); g_calView = nullptr; } }
+static void cal_view_build();
+static void cal_view_cb(lv_event_t *e) {
+  int a = (int)(intptr_t)lv_event_get_user_data(e);
+  if (a == -1) { cal_view_close(); return; }
+  if (a >= 0 && a <= 2) { g_calMode = a; g_calMonthOfs = 0; }
+  else if (a == 10 || a == 11) {                               // indietro / avanti
+    int d = a == 10 ? -1 : 1;
+    if (g_calMode == 0) g_calSel = day_add(g_calSel, d);
+    else if (g_calMode == 1) g_calSel = day_add(g_calSel, 7 * d);
+    else g_calMonthOfs += d;
+  } else if (a == 12) { g_calSel = day_start(time(nullptr)); g_calMonthOfs = 0; }   // oggi
+  else if (a >= 100) {                                         // giorno toccato nel mese
+    time_t now = time(nullptr);
+    struct tm tv; localtime_r(&now, &tv);
+    tv.tm_mon += g_calMonthOfs; tv.tm_mday = a - 100; tv.tm_hour = 0; tv.tm_min = 0; tv.tm_sec = 0; tv.tm_isdst = -1;
+    g_calSel = mktime(&tv);
+    g_calMode = 0; g_calMonthOfs = 0;
+  }
+  cal_view_build();
+}
+// eventi che toccano il giorno [d, d+1): indici in out, al massimo max
+static int cal_day_events(time_t d, int *out, int max) {
+  time_t e = day_add(d, 1);
+  int n = 0;
+  for (int i = 0; i < g_calAllN && n < max; i++)
+    if ((time_t)g_calAll[i].s < e && (time_t)g_calAll[i].e > d) out[n++] = i;
+  return n;
+}
+static void cal_ev_text(const CalItem &c, time_t d, char *out, size_t sz, bool compact) {
+  if (c.allday) { snprintf(out, sz, "%s  %s", TRS("tutto il giorno", "all day"), c.title); return; }
+  char a[12], z[12];
+  fmt_hm((time_t)c.s < d ? (uint32_t)d : c.s, a, sizeof(a));
+  fmt_hm(c.e, z, sizeof(z));
+  if (compact) snprintf(out, sz, "%s  %s", a, c.title);
+  else         snprintf(out, sz, "%s-%s  %s", a, z, c.title);
+}
+static const char *GG_IT[7] = {"dom", "lun", "mar", "mer", "gio", "ven", "sab"};
+static const char *GG_EN[7] = {"sun", "mon", "tue", "wed", "thu", "fri", "sat"};
+static const char *MM_IT[12] = {"gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno", "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"};
+static const char *MM_EN[12] = {"january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"};
+
+static void cal_view_build() {
+  cal_view_close();
+  lv_obj_t *s = plain_obj(lv_layer_top());
+  g_calView = s;
+  lv_obj_set_size(s, 480, 320);
+  lv_obj_set_style_bg_color(s, lv_color_hex(C_BG), 0);
+  lv_obj_set_style_bg_opa(s, LV_OPA_COVER, 0);
+  lv_obj_add_flag(s, LV_OBJ_FLAG_CLICKABLE);
+  // schede e chiudi
+  const char *TAB[3] = {TRS("giorno", "day"), TRS("settimana", "week"), TRS("mese", "month")};
+  for (int i = 0; i < 3; i++) {
+    lv_obj_t *b = tbtn(s, 13 + i * 96, 5, 90, 32, TAB[i], F14, i == g_calMode ? C_BLUE : C_MUTED,
+                       i == g_calMode ? C_BLUE : C_BORDER, cal_view_cb, (void *)(intptr_t)i);
+    (void)b;
+  }
+  tbtn(s, 378, 5, 89, 32, TRS(U_LEFT " chiudi", U_LEFT " close"), F14, C_MUTED, C_BORDER, cal_view_cb, (void *)(intptr_t)-1);
+  hline(s, 13, 42, 454, C_BORDER);
+  time_t now = time(nullptr);
+  if (!g_ical[0] || g_calAllN < 0 || now < 1000000000L) {
+    const char *m = !g_ical[0] ? TRS("imposta il link iCal dal browser: http://<ip>/home", "set the iCal link from the browser: http://<ip>/home")
+                  : g_calAllReq ? TRS("caricamento dal PC...", "loading from the PC...")
+                  : TRS("calendario non disponibile: il PC Monitor e' acceso?", "calendar unavailable: is the PC Monitor running?");
+    lv_obj_t *l = tstatic(s, m, F14, C_MUTED, 20, 70);
+    lv_obj_set_width(l, 440);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_WRAP);
+    return;
+  }
+  if (!g_calSel) g_calSel = day_start(now);
+  time_t today = day_start(now);
+  struct tm tv; localtime_r(&g_calSel, &tv);
+  char h[64];
+  // riga di navigazione: ‹  titolo  ›  oggi
+  tbtn(s, 13, 50, 40, 30, "<", F14, C_TEXT, C_BORDER, cal_view_cb, (void *)(intptr_t)10);
+  tbtn(s, 386, 50, 40, 30, ">", F14, C_TEXT, C_BORDER, cal_view_cb, (void *)(intptr_t)11);
+  tbtn(s, 431, 50, 36, 30, TRS("oggi", "now"), F12, C_ACCENT, C_BORDER, cal_view_cb, (void *)(intptr_t)12);
+  lv_obj_t *title = tstatic(s, "", F14, C_TEXT, 58, 56);
+  lv_obj_set_width(title, 322);
+  lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
+
+  if (g_calMode == 0) {                                          // ---- giorno
+    snprintf(h, sizeof(h), "%s %d %s%s", (g_lang ? GG_EN : GG_IT)[tv.tm_wday], tv.tm_mday, (g_lang ? MM_EN : MM_IT)[tv.tm_mon],
+             g_calSel == today ? TRS(" (oggi)", " (today)") : "");
+    lv_label_set_text(title, h);
+    lv_obj_t *lst = tlist(s, 13, 88, 454, 226);
+    int idx[24]; int n = cal_day_events(g_calSel, idx, 24);
+    if (!n) tstatic(lst, TRS("nessun evento", "no events"), F14, C_FAINT, 13, 10);
+    for (int k = 0; k < n; k++) {
+      const CalItem &c = g_calAll[idx[k]];
+      char t[80]; cal_ev_text(c, g_calSel, t, sizeof(t), false);
+      bool nowOn = !c.allday && (time_t)c.s <= now && (time_t)c.e > now;
+      lv_obj_t *row = kv_row(lst, t, "", nowOn ? C_OK : (c.allday ? C_BLUE : C_TEXT), C_MUTED, nullptr, nullptr);
+      lv_obj_t *k0 = lv_obj_get_child(row, 0);
+      lv_obj_set_width(k0, 428);
+      lv_label_set_long_mode(k0, LV_LABEL_LONG_DOT);
+    }
+  } else if (g_calMode == 1) {                                   // ---- settimana (lun-dom)
+    int back = (tv.tm_wday + 6) % 7;
+    time_t mon = day_add(g_calSel, -back);
+    struct tm a, z; time_t sun = day_add(mon, 6);
+    localtime_r(&mon, &a); localtime_r(&sun, &z);
+    snprintf(h, sizeof(h), "%d %s - %d %s", a.tm_mday, (g_lang ? MM_EN : MM_IT)[a.tm_mon], z.tm_mday, (g_lang ? MM_EN : MM_IT)[z.tm_mon]);
+    lv_label_set_text(title, h);
+    lv_obj_t *lst = tlist(s, 13, 88, 454, 226);
+    for (int d = 0; d < 7; d++) {
+      time_t day = day_add(mon, d);
+      struct tm dv; localtime_r(&day, &dv);
+      int idx[12]; int n = cal_day_events(day, idx, 12);
+      char dh[32]; snprintf(dh, sizeof(dh), "%s %d", (g_lang ? GG_EN : GG_IT)[dv.tm_wday], dv.tm_mday);
+      lv_obj_t *r = plain_obj(lst);
+      lv_obj_set_size(r, 454, 24);
+      tstatic(r, dh, F14, day == today ? C_ACCENT : C_MUTED, 13, 4);
+      if (!n) tstatic(r, "-", F12, C_FAINT, 90, 6);
+      for (int k = 0; k < n; k++) {
+        char t[80]; cal_ev_text(g_calAll[idx[k]], day, t, sizeof(t), true);
+        lv_obj_t *l;
+        if (k == 0) l = tstatic(r, t, F12, g_calAll[idx[k]].allday ? C_BLUE : C_TEXT, 90, 6);
+        else {
+          lv_obj_t *r2 = plain_obj(lst);
+          lv_obj_set_size(r2, 454, 20);
+          l = tstatic(r2, t, F12, g_calAll[idx[k]].allday ? C_BLUE : C_TEXT, 90, 2);
+        }
+        lv_obj_set_width(l, 350);
+        lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+      }
+    }
+  } else {                                                       // ---- mese
+    struct tm mv = tv;
+    mv.tm_mon += g_calMonthOfs; mv.tm_mday = 1; mv.tm_hour = 12; mv.tm_isdst = -1;
+    time_t first = mktime(&mv);                                  // normalizza anno e mese
+    localtime_r(&first, &mv);
+    snprintf(h, sizeof(h), "%s %d", (g_lang ? MM_EN : MM_IT)[mv.tm_mon], mv.tm_year + 1900);
+    lv_label_set_text(title, h);
+    for (int c = 0; c < 7; c++)                                  // intestazione lun..dom
+      tstatic(s, (g_lang ? GG_EN : GG_IT)[(c + 1) % 7], F12, C_FAINT, 30 + c * 62 + 16, 88);
+    int lead = (mv.tm_wday + 6) % 7;
+    static const uint8_t DAYS[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    int y = mv.tm_year + 1900;
+    int nd = DAYS[mv.tm_mon] + (mv.tm_mon == 1 && ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0));
+    time_t d0 = day_start(first);
+    for (int dd = 1; dd <= nd; dd++) {
+      int cell = lead + dd - 1, cx = 30 + (cell % 7) * 62, cy = 106 + (cell / 7) * 34;
+      time_t day = day_add(d0, dd - 1);
+      int idx[1]; bool ev = cal_day_events(day, idx, 1) > 0;
+      char num[4]; snprintf(num, sizeof(num), "%d", dd);
+      lv_obj_t *b = tbtn(s, cx, cy, 56, 30, num, F14, day == today ? C_ACCENT : C_TEXT,
+                         day == today ? C_ACCENT : C_BG, cal_view_cb, (void *)(intptr_t)(100 + dd));
+      if (ev) rrect(b, 24, 22, 6, 4, 2, C_BLUE);                  // puntino: ci sono eventi
+    }
+  }
+  lv_mem_monitor_t mon; lv_mem_monitor(&mon);
+  Serial.printf("[CAL] vista %d: %d eventi, memoria LVGL libera %u KB\n", g_calMode, g_calAllN, (unsigned)(mon.free_size / 1024));
+}
+static void cal_view_open(lv_event_t *e) {
+  (void)e;
+  g_calSel = 0; g_calMonthOfs = 0;
+  if (g_ical[0] && g_pcHost[0] && !g_calAllReq && (g_calAllN < 0 || millis() - g_calAllAtMs > 60000)) g_calAllReq = true;
+  cal_view_build();
+}
+
 // home: tocca il riquadro claude o pc per andare alla pagina con i dettagli
 static void home_goto_cb(lv_event_t *e) {
   int tile = (int)(intptr_t)lv_event_get_user_data(e);
@@ -3033,28 +3218,46 @@ static void cc_busy_ui() {
   }
   if (!g_ccBusyN && g_ui.hdrSpark) label_set(g_ui.hdrSpark, U_SPARK " ");   // ferma: di nuovo ✻
 }
+// pulsanti con icona disegnata (il font non ha i glifi): pomodoro, timer, calendario
+static void home_icon_cb(lv_event_t *e) {
+  int a = (int)(intptr_t)lv_event_get_user_data(e);
+  if (a == 3) { cal_view_open(nullptr); return; }
+  g_tmMenuMode = a;                                   // 1 pomodoro, 2 timer
+  tm_menu_open(nullptr);
+}
+static void home_icons(lv_obj_t *t) {
+  lv_obj_t *b;
+  b = tbtn(t, 335, 206, 40, 40, "", F12, C_TEXT, C_BORDER, home_icon_cb, (void *)(intptr_t)1);   // pomodoro
+  rrect(b, 10, 13, 20, 17, 8, C_BAD);
+  rrect(b, 14, 10, 12, 4, 2, C_OK);
+  rrect(b, 19, 6, 2, 5, 1, C_OK);
+  b = tbtn(t, 381, 206, 40, 40, "", F12, C_TEXT, C_BORDER, home_icon_cb, (void *)(intptr_t)2);   // timer: cronometro
+  lv_obj_t *ring = plain_obj(b);
+  lv_obj_set_pos(ring, 9, 11); lv_obj_set_size(ring, 22, 22);
+  lv_obj_set_style_radius(ring, 11, 0);
+  lv_obj_set_style_border_width(ring, 2, 0);
+  lv_obj_set_style_border_color(ring, lv_color_hex(C_TEXT), 0);
+  rrect(b, 16, 6, 8, 3, 1, C_TEXT);
+  rrect(b, 19, 15, 2, 8, 1, C_ACCENT);
+  b = tbtn(t, 427, 206, 40, 40, "", F12, C_TEXT, C_BORDER, home_icon_cb, (void *)(intptr_t)3);   // calendario
+  lv_obj_t *pg = plain_obj(b);
+  lv_obj_set_pos(pg, 9, 10); lv_obj_set_size(pg, 22, 21);
+  lv_obj_set_style_radius(pg, 3, 0);
+  lv_obj_set_style_border_width(pg, 2, 0);
+  lv_obj_set_style_border_color(pg, lv_color_hex(C_TEXT), 0);
+  rrect(b, 9, 10, 22, 6, 2, C_BLUE);
+  rrect(b, 13, 7, 2, 6, 1, C_TEXT);
+  rrect(b, 25, 7, 2, 6, 1, C_TEXT);
+  for (int k = 0; k < 4; k++) rrect(b, 13 + (k % 2) * 8, 19 + (k / 2) * 5, 4, 3, 0, C_MUTED);
+}
 static void build_tile_home(lv_obj_t *t) {
   // griglia aurea: colonna sinistra fino a x 297 (480 / phi), meteo da 310
   g_ui.hmTime = tlabel(t, F96, C_TEXT, 7, 7);
   lv_obj_add_flag(g_ui.hmTime, LV_OBJ_FLAG_CLICKABLE);           // tocca l'ora: timer e pomodoro
   lv_obj_set_ext_click_area(g_ui.hmTime, 8);
   lv_obj_add_event_cb(g_ui.hmTime, tm_menu_open, LV_EVENT_SHORT_CLICKED, NULL);
-  // pomodoro disegnato (il font non ha il glifo): dice che la riga sotto l'ora apre timer e pomodoro
-  lv_obj_t *tom = plain_obj(t);
-  lv_obj_set_pos(tom, 13, 81);
-  lv_obj_set_size(tom, 14, 16);
-  rrect(tom, 0, 3, 14, 13, 6, C_BAD);
-  rrect(tom, 3, 1, 8, 3, 1, C_OK);
-  rrect(tom, 6, 0, 2, 3, 0, C_OK);
-  g_ui.hmDate = tlabel(t, F14, C_MUTED, 33, 86);       // a meta' tra l'ora e il riquadro claude
-  lv_obj_set_width(g_ui.hmDate, 264);
-  // centrato sulla scritta: -2 perche' le lettere stanno sopra il centro del riquadro della riga
-  lv_obj_align_to(tom, g_ui.hmDate, LV_ALIGN_OUT_LEFT_MID, -6, -2);
-  for (lv_obj_t *o : {tom, g_ui.hmDate}) {
-    lv_obj_add_flag(o, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_ext_click_area(o, 8);
-    lv_obj_add_event_cb(o, tm_menu_open, LV_EVENT_SHORT_CLICKED, NULL);
-  }
+  g_ui.hmDate = tlabel(t, F14, C_MUTED, 13, 86);       // a meta' tra l'ora e il riquadro claude
+  lv_obj_set_width(g_ui.hmDate, 284);
   lv_label_set_long_mode(g_ui.hmDate, LV_LABEL_LONG_DOT);
 
   g_ui.hmWxIcon = plain_obj(t);
@@ -3099,18 +3302,19 @@ static void build_tile_home(lv_obj_t *t) {
   lv_obj_align(g_ui.hmPauseRow, LV_ALIGN_TOP_RIGHT, -(454 - 2 - 441), 13 + 30 + 2);
   lv_obj_add_flag(g_ui.hmPauseRow, LV_OBJ_FLAG_HIDDEN);
 
-  lv_obj_t *p = tbox(t, 13, 206, 454, 40, "pc", C_BORDER, &g_ui.hmPcLegend);
+  lv_obj_t *p = tbox(t, 13, 206, 314, 40, "pc", C_BORDER, &g_ui.hmPcLegend);   // a destra: pomodoro, timer, calendario
+  home_icons(t);
   lv_obj_add_flag(p, LV_OBJ_FLAG_CLICKABLE);                       // -> pagina pc
   lv_obj_add_event_cb(p, home_goto_cb, LV_EVENT_SHORT_CLICKED, (void *)(intptr_t)6);
   g_ui.hmPcRow = trow(p, 13, 9);
-  const char *pk[4] = {"cpu ", "   ram ", "   gpu ", TRS("   disco ", "   disk ")};
-  for (int i = 0; i < 4; i++) {
+  const char *pk[3] = {"cpu ", "   ram ", "   gpu "};   // il disco e' nella pagina pc
+  for (int i = 0; i < 3; i++) {
     mklabel(g_ui.hmPcRow, pk[i], F12, C_MUTED);
     g_ui.hmPcVal[i] = mklabel(g_ui.hmPcRow, "--", F14, C_TEXT);
   }
   g_ui.hmPcOff = tlabel(p, F12, C_FAINT, 13, 11);
   cc_busy_ui();
-  lv_obj_set_width(g_ui.hmPcOff, 426);
+  lv_obj_set_width(g_ui.hmPcOff, 288);
   lv_label_set_long_mode(g_ui.hmPcOff, LV_LABEL_LONG_DOT);
   home_redraw();
 }
@@ -3229,7 +3433,7 @@ static void home_redraw() {
     if (g_pc.gpuTemp > 0) snprintf(s, sizeof(s), "%.0f%% %.0f\xC2\xB0", g_pc.gpu, g_pc.gpuTemp); else snprintf(s, sizeof(s), "%.0f%%", g_pc.gpu);
     label_set(g_ui.hmPcVal[2], s);
     snprintf(s, sizeof(s), "%.0f%%", g_pc.disk);
-    label_set(g_ui.hmPcVal[3], s); label_color(g_ui.hmPcVal[3], g_pc.disk > 90 ? C_WARN : C_TEXT);
+    if (g_ui.hmPcVal[3]) { label_set(g_ui.hmPcVal[3], s); label_color(g_ui.hmPcVal[3], g_pc.disk > 90 ? C_WARN : C_TEXT); }
   } else {
     lv_obj_add_flag(g_ui.hmPcRow, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(g_ui.hmPcOff, LV_OBJ_FLAG_HIDDEN);
@@ -4184,7 +4388,7 @@ static void tm_tick() {
 
 // menu del timer: si apre toccando l'ora o la riga col pomodoro nella home
 static lv_obj_t *g_tmMenu = nullptr;
-static void tm_menu_close() { if (g_tmMenu) { lv_obj_delete(g_tmMenu); g_tmMenu = nullptr; } }
+static void tm_menu_close() { if (g_tmMenu) { lv_obj_delete(g_tmMenu); g_tmMenu = nullptr; } g_tmMenuMode = 0; }
 // 0-2 pomodoro (impostazione), 3-6 timer 5/10/15/30 min, 10 ferma, 11 salta fase, 12 +5 min,
 // 100+m timer di m minuti (dal PC). false = comando non valido in questo momento
 static bool tm_action(int opt) {
@@ -4223,16 +4427,24 @@ static void tm_menu_open(lv_event_t *e) {
   lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
   lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);             // i tocchi sul riquadro non chiudono
   if (!g_tmMode) {
-    tstatic(b, TRS("pomodoro " U_MIDDOT " focus/pausa in minuti", "pomodoro " U_MIDDOT " focus/break in minutes"), F12, C_MUTED, 20, 12);
-    for (int i = 0; i < 3; i++) {
-      char l[12]; snprintf(l, sizeof(l), "%d/%d", POMO_PRESETS[i].focus, POMO_PRESETS[i].brk);
-      tbtn(b, 20 + i * 90, 30, 80, 40, l, F14, C_ACCENT, C_BORDER, tm_menu_cb, (void *)(intptr_t)i);
+    int y = 12;
+    if (g_tmMenuMode != 2) {                            // pomodoro
+      tstatic(b, TRS("pomodoro " U_MIDDOT " focus/pausa in minuti", "pomodoro " U_MIDDOT " focus/break in minutes"), F12, C_MUTED, 20, y);
+      for (int i = 0; i < 3; i++) {
+        char l[12]; snprintf(l, sizeof(l), "%d/%d", POMO_PRESETS[i].focus, POMO_PRESETS[i].brk);
+        tbtn(b, 20 + i * 90, y + 18, 80, 40, l, F14, C_ACCENT, C_BORDER, tm_menu_cb, (void *)(intptr_t)i);
+      }
+      y += 70;
     }
-    tstatic(b, "timer", F12, C_MUTED, 20, 82);
-    const char *T[4] = {"5 min", "10 min", "15 min", "30 min"};
-    for (int i = 0; i < 4; i++)
-      tbtn(b, 20 + i * 67, 100, 58, 40, T[i], F14, C_TEXT, C_BORDER, tm_menu_cb, (void *)(intptr_t)(3 + i));
-    tbtn(b, 20, 158, 258, 38, TRS("annulla", "cancel"), F14, C_MUTED, C_BORDER, tm_menu_cb, (void *)(intptr_t)-1);
+    if (g_tmMenuMode != 1) {                            // timer
+      tstatic(b, "timer", F12, C_MUTED, 20, y);
+      const char *T[4] = {"5 min", "10 min", "15 min", "30 min"};
+      for (int i = 0; i < 4; i++)
+        tbtn(b, 20 + i * 67, y + 18, 58, 40, T[i], F14, C_TEXT, C_BORDER, tm_menu_cb, (void *)(intptr_t)(3 + i));
+      y += 70;
+    }
+    tbtn(b, 20, y + 6, 258, 38, TRS("annulla", "cancel"), F14, C_MUTED, C_BORDER, tm_menu_cb, (void *)(intptr_t)-1);
+    if (g_tmMenuMode) lv_obj_set_height(b, y + 62);     // riquadro piu' basso con una sola sezione
   } else {
     char st[32]; tm_label(st, sizeof(st));
     tstatic(b, st, F22, tm_color(), 20, 30);
@@ -5409,6 +5621,7 @@ static void render_state() {
   pause_menu_close();
   tm_menu_close();
   wx_week_close();
+  cal_view_close();
   shade_close();
   upd_close();                                   // se l'installazione e' in corso il loop la rimette
   night_clock_close();
@@ -5541,6 +5754,12 @@ static void extra_task(void *) {
       }
       g_updCheckReq = false;
       g_updDone = true;
+    }
+    if (g_calAllReq) {
+      char host[48]; strlcpy(host, g_pcHost, sizeof(host));
+      g_calAllRes = (g_calTmp && g_wifi.isConnected()) ? fetchCalRange(host, g_calTmp, CAL_ALL_MAX) : -1;
+      g_calAllReq = false;
+      g_calAllDone = true;
     }
     if (g_pcNtfReq) {
       PcNotify n = g_pcNtf;
@@ -5722,6 +5941,8 @@ void setup() {
       Serial.printf("[HIST] migrazione multi-account: %s\n", ok ? "ok" : "FALLITA");
     }
     load_history();
+    g_calAll = (CalItem *)heap_caps_calloc(CAL_ALL_MAX, sizeof(CalItem), MALLOC_CAP_SPIRAM);
+    g_calTmp = (CalItem *)heap_caps_calloc(CAL_ALL_MAX, sizeof(CalItem), MALLOC_CAP_SPIRAM);
     pomo_load();
     al_load();
   }
@@ -5836,6 +6057,14 @@ void loop() {
   night_clock_sync();
   tm_tick();
   // home: meteo ogni 30 min (nuovo tentativo dopo 5 min se fallisce), PC ogni 5 s se la home e' visibile
+  if (g_calAllDone) {
+    g_calAllDone = false;
+    if (g_calAllRes >= 0 && g_calAll) {
+      memcpy(g_calAll, g_calTmp, sizeof(CalItem) * g_calAllRes);
+      g_calAllN = g_calAllRes; g_calAllAtMs = millis();
+    }
+    if (g_calView) cal_view_build();
+  }
   if (g_wxDone) {
     g_wxDone = false;
     if (g_wxRes.ok) { g_wx = g_wxRes; g_wxAtMs = millis(); }
@@ -5950,7 +6179,7 @@ void loop() {
         }
       }
     }
-    if (g_slideSec > 0 && g_ui.tv && !g_refreshing && !g_mo.scrim && !g_nt.scrim && !g_tmMenu && !g_wxWeek && !g_shade && g_screenMode < 2 &&
+    if (g_slideSec > 0 && g_ui.tv && !g_refreshing && !g_mo.scrim && !g_nt.scrim && !g_tmMenu && !g_wxWeek && !g_shade && !g_calView && g_screenMode < 2 &&
         now - g_lastTouchMs > 10000 && now - g_lastSlideMs > (uint32_t)g_slideSec * 1000) {
       g_lastSlideMs = now;
       int next = (g_curTile + 1) % NTILES;
@@ -5964,7 +6193,7 @@ void loop() {
     }
     // torna alla home dopo N minuti senza tocchi (una volta per periodo di inattivita')
     static uint32_t homedFor = 0;
-    if (g_clockIdx && g_ui.tv && g_curTile != 0 && !g_mo.scrim && !g_nt.scrim && !g_pauseMenu && !g_tmMenu && !g_wxWeek && !g_shade && g_screenMode < 2 &&
+    if (g_clockIdx && g_ui.tv && g_curTile != 0 && !g_mo.scrim && !g_nt.scrim && !g_pauseMenu && !g_tmMenu && !g_wxWeek && !g_shade && !g_calView && g_screenMode < 2 &&
         homedFor != g_lastTouchMs && now - g_lastTouchMs > CLOCK_MIN[g_clockIdx] * 60000UL) {
       homedFor = g_lastTouchMs;
       lv_tileview_set_tile_by_index(g_ui.tv, 0, 0, LV_ANIM_ON);

@@ -802,6 +802,8 @@ def make_handler(sampler, lhm, port):
                     cfg["device"] = devices[0]["ip"]
                     save_config(cfg)
                 self._send(200, "application/json", json.dumps(devices))
+            elif path == "/calendar.json" and (self._from_device() or self._local()):
+                self._send(200, "application/json", json.dumps(CAL.range_json(), ensure_ascii=False))
             elif path == "/api/calendar" and self._local():
                 self._send(200, "application/json", json.dumps(CAL.status()))
             elif path == "/api/notify" and self._local():
@@ -1074,8 +1076,8 @@ def _ics_occurrences(start, rule, exdates, until_limit):
     return out
 
 
-def ics_upcoming(text, now, horizon_days=7, limit=3):
-    """Prossimi eventi (inizio, fine, titolo) non ancora finiti, senza quelli di tutto il giorno e quelli annullati."""
+def ics_events(text, start_t, end_t):
+    """Eventi (inizio, fine, titolo, tutto il giorno) che toccano [start_t, end_t), ricorrenze comprese, senza gli annullati."""
     events, overrides = [], {}
     cur = None
     for line in _ics_lines(text):
@@ -1093,7 +1095,7 @@ def ics_upcoming(text, now, horizon_days=7, limit=3):
                     cur["exdate"].add(int(_ics_time(v, params)[0]))
             elif name in ("SUMMARY", "RRULE", "UID", "STATUS", "DURATION"):
                 cur[name] = value
-    end_limit = now + horizon_days * 86400
+    end_limit = end_t
     found = []
     for e in events:
         if "DTSTART" not in e or e.get("STATUS", "").upper() == "CANCELLED":
@@ -1101,25 +1103,36 @@ def ics_upcoming(text, now, horizon_days=7, limit=3):
                 overrides[(e.get("UID"), int(e["RECURRENCE-ID"][0]))] = None
             continue
         start, allday = e["DTSTART"]
-        if allday:
-            continue
-        dur = e["DTEND"][0] - start if "DTEND" in e else _ics_duration(e.get("DURATION", "PT1H"))
+        dur = e["DTEND"][0] - start if "DTEND" in e else (86400 if allday else _ics_duration(e.get("DURATION", "PT1H")))
         title = e.get("SUMMARY", "").replace("\\,", ",").replace("\\;", ";").replace("\\n", " ").replace("\\", "")
         if "RECURRENCE-ID" in e:                           # occorrenza spostata di un evento ricorrente
-            overrides[(e.get("UID"), int(e["RECURRENCE-ID"][0]))] = (start, start + dur, title)
+            overrides[(e.get("UID"), int(e["RECURRENCE-ID"][0]))] = (start, start + dur, title, allday)
             continue
         starts = _ics_occurrences(start, e["RRULE"], e["exdate"], end_limit) if "RRULE" in e else [start]
         for s in starts:
-            found.append((e.get("UID"), int(s), (s, s + dur, title)))
+            found.append((e.get("UID"), int(s), (s, s + dur, title, allday)))
     result = []
     for uid, key, ev in found:
         if (uid, key) in overrides:
             continue                                       # sostituita (o annullata) da un'eccezione
         result.append(ev)
     result += [ev for ev in overrides.values() if ev]
-    result = [ev for ev in result if ev[1] > now and ev[0] < end_limit]
+    result = [ev for ev in result if ev[1] > start_t and ev[0] < end_t]
     result.sort()
-    return result[:limit]
+    return result
+
+
+def ics_upcoming(text, now, horizon_days=7, limit=3):
+    """Prossimi eventi (inizio, fine, titolo) non ancora finiti, senza quelli di tutto il giorno."""
+    return [ev[:3] for ev in ics_events(text, now, now + horizon_days * 86400) if not ev[3]][:limit]
+
+
+def cal_range_bounds(now):
+    """Periodo per le viste del dispositivo: dal primo del mese a sei settimane da oggi."""
+    import datetime as dt
+    d = dt.datetime.fromtimestamp(now)
+    first = d.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return time.mktime(first.timetuple()), now + 42 * 86400
 
 
 def _cal_title(t):
@@ -1138,6 +1151,7 @@ class Calendar(threading.Thread):
         super().__init__(daemon=True)
         self.lock = threading.Lock()
         self.events, self.state, self.at = None, "in attesa del dispositivo", 0
+        self.range = []
         self.wake = threading.Event()
 
     def refresh(self):
@@ -1163,7 +1177,11 @@ class Calendar(threading.Thread):
             req = urllib.request.Request(url, headers={"User-Agent": "ritmo-code-pc-monitor"})
             with urllib.request.urlopen(req, timeout=20) as r:
                 text = r.read(8 * 1024 * 1024).decode("utf-8", "replace")
-            events = ics_upcoming(text, time.time())
+            now = time.time()
+            events = ics_upcoming(text, now)
+            rng = ics_events(text, *cal_range_bounds(now))
+            with self.lock:
+                self.range = rng[:120]                     # per le viste giorno/settimana/mese del dispositivo
             self._set(events, f"{len(events)} eventi nei prossimi 7 giorni")
         except Exception as error:
             self._set(self.events, f"download non riuscito: {error}")
@@ -1180,6 +1198,11 @@ class Calendar(threading.Thread):
             for i, (s, e, t) in enumerate(self.events):
                 data.update({f"cal{i}_t": _cal_title(t), f"cal{i}_s": int(s), f"cal{i}_e": int(e)})
             return data
+
+    def range_json(self):
+        """Eventi del periodo per le viste del dispositivo (righe corte: [inizio, fine, tutto il giorno, titolo])."""
+        with self.lock:
+            return {"n": len(self.range), "ev": [[int(s), int(e), 1 if a else 0, _cal_title(t)] for s, e, t, a in self.range]}
 
     def status(self):
         with self.lock:

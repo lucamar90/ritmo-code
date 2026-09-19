@@ -340,3 +340,36 @@ bool installFromUrl(const char* url, void (*progress)(int pct), String& err) {
   Serial.printf("[OTA] installato %d byte da %s\n", done, url);
   return true;
 }
+
+// {"n":..,"ev":[[inizio,fine,tutto_il_giorno,"titolo"],...]} (titoli gia' senza virgolette dal PC Monitor)
+int fetchCalRange(const char* host, CalItem* out, int max) {
+  if (!host || !host[0]) return -1;
+  WiFiClient client;
+  HTTPClient http;
+  if (!http.begin(client, String("http://") + host + "/calendar.json")) return -1;
+  http.setConnectTimeout(3000);
+  http.setTimeout(5000);
+  int code = http.GET();
+  if (code != 200) { http.end(); Serial.printf("[CAL] calendar.json -> %d\n", code); return -1; }
+  String s = http.getString();
+  http.end();
+  int p = s.indexOf("\"ev\"");
+  if (p < 0) return -1;
+  p = s.indexOf('[', p);
+  int n = 0;
+  while (p >= 0 && n < max) {
+    int a = s.indexOf('[', p + 1);
+    if (a < 0) break;
+    int c1 = s.indexOf(',', a), c2 = c1 < 0 ? -1 : s.indexOf(',', c1 + 1), c3 = c2 < 0 ? -1 : s.indexOf(',', c2 + 1);
+    int q1 = c3 < 0 ? -1 : s.indexOf('"', c3), q2 = q1 < 0 ? -1 : s.indexOf('"', q1 + 1);
+    if (q2 < 0) break;
+    CalItem &it = out[n++];
+    it.s = (uint32_t)s.substring(a + 1, c1).toInt();
+    it.e = (uint32_t)s.substring(c1 + 1, c2).toInt();
+    it.allday = s.substring(c2 + 1, c3).toInt() ? 1 : 0;
+    strlcpy(it.title, s.substring(q1 + 1, q2).c_str(), sizeof(it.title));
+    p = s.indexOf(']', q2);
+  }
+  Serial.printf("[CAL] %d eventi del periodo dal PC\n", n);
+  return n;
+}

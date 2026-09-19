@@ -1055,6 +1055,87 @@ function wxWeekOpen() {
   Object.assign(f.style, { width: '460px', textAlign: 'center' });
   label(s, TRS('[ tocca per chiudere ]', '[ tap to close ]'), 11, C.FAINT, 292, 284);
 }
+// calendario (dati di esempio; sul dispositivo arrivano dal PC Monitor)
+const CAL = [];
+function calShow(ev) {
+  const m = Math.ceil((ev.s - nowEpoch()) / 60);
+  noticeShow({ kind: NT_TIMER, col: C.BLUE, hop: false, maxMs: 600000, legend: TRS('calendario', 'calendar'), top: m > 0 ? TRS('tra poco', 'coming up') : TRS('inizia adesso', 'starting now'),
+    big: m > 0 ? m : -1, unit: ' min', word: TRS('adesso', 'now'), msg: ev.t, foot: `${fmtHm(ev.s)} - ${fmtHm(ev.e)}` });
+}
+// ---- calendario a viste: giorno / settimana / mese (eventi di esempio) ----
+const CAL_ALL = (() => {
+  const d0 = new Date(); d0.setHours(0, 0, 0, 0);
+  const at = (dd, h, m) => Math.floor(new Date(d0.getFullYear(), d0.getMonth(), d0.getDate() + dd, h, m).getTime() / 1000);
+  const ev = [];
+  for (let dd = -18; dd < 42; dd++) {
+    const wd = new Date(d0.getFullYear(), d0.getMonth(), d0.getDate() + dd).getDay();
+    if (wd >= 1 && wd <= 5) ev.push({ s: at(dd, 9, 30), e: at(dd, 9, 45), t: 'Stand-up', a: 0 });
+    if (wd === 2 || wd === 4) ev.push({ s: at(dd, 15, 0), e: at(dd, 16, 0), t: 'Call cliente · sito web', a: 0 });
+  }
+  ev.push({ s: at(0, 11, 0), e: at(0, 12, 30), t: 'Revisione preventivo', a: 0 });
+  ev.push({ s: at(3, 0, 0), e: at(4, 0, 0), t: 'Consegna progetto', a: 1 });
+  ev.push({ s: at(9, 0, 0), e: at(11, 0, 0), t: 'Ferie', a: 1 });
+  return ev.sort((x, y) => x.s - y.s);
+})();
+let CALV = null, calMode = 0, calSel = 0, calMonthOfs = 0;
+const dayStart = (t) => { const d = new Date(t * 1000); d.setHours(0, 0, 0, 0); return Math.floor(d.getTime() / 1000); };
+const dayAdd = (t, n) => { const d = new Date(t * 1000); d.setDate(d.getDate() + n); d.setHours(0, 0, 0, 0); return Math.floor(d.getTime() / 1000); };
+const calDay = (d) => CAL_ALL.filter((c) => c.s < dayAdd(d, 1) && c.e > d);
+const calTxt = (c, d, compact) => c.a ? `${TRS('tutto il giorno', 'all day')}  ${c.t}` : `${fmtHm(Math.max(c.s, d))}${compact ? '' : '-' + fmtHm(c.e)}  ${c.t}`;
+function calViewClose() { if (CALV) { CALV.remove(); CALV = null; } }
+function calViewOpen() { calSel = 0; calMonthOfs = 0; calViewBuild(); }
+function calViewBuild() {
+  calViewClose();
+  const s = obj(scr, 0, 0, 480, 320, { background: C.BG, zIndex: 58 });
+  s.addEventListener('click', (e) => e.stopPropagation());
+  CALV = s;
+  const GG = P.lang ? ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] : ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'];
+  const MM = P.lang ? ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december']
+    : ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
+  const B = (txt, x, y, w, h, fn, col, bd, size = 14) => { const b = tbtn(s, txt, w, h, () => { fn(); calViewBuild(); }, { color: col, size, border: bd || C.BORDER }); b.style.left = x + 'px'; b.style.top = y + 'px'; return b; };
+  [TRS('giorno', 'day'), TRS('settimana', 'week'), TRS('mese', 'month')].forEach((t, i) => B(t, 13 + i * 96, 5, 90, 32, () => { calMode = i; calMonthOfs = 0; }, i === calMode ? C.BLUE : C.MUTED, i === calMode ? C.BLUE : C.BORDER));
+  const cl = tbtn(s, `← ${TRS('chiudi', 'close')}`, 89, 32, () => calViewClose(), { color: C.MUTED }); cl.style.left = '378px'; cl.style.top = '5px';
+  obj(s, 13, 42, 454, 1, { background: C.BORDER });
+  const now = nowEpoch(), today = dayStart(now);
+  if (!calSel) calSel = today;
+  B('<', 13, 50, 40, 30, () => { if (calMode === 0) calSel = dayAdd(calSel, -1); else if (calMode === 1) calSel = dayAdd(calSel, -7); else calMonthOfs--; }, C.TEXT);
+  B('>', 386, 50, 40, 30, () => { if (calMode === 0) calSel = dayAdd(calSel, 1); else if (calMode === 1) calSel = dayAdd(calSel, 7); else calMonthOfs++; }, C.TEXT);
+  B(TRS('oggi', 'now'), 431, 50, 36, 30, () => { calSel = today; calMonthOfs = 0; }, C.ACCENT, C.BORDER, 12);
+  const title = label(s, '', 14, C.TEXT, 58, 56); Object.assign(title.style, { width: '322px', textAlign: 'center' });
+  const sel = new Date(calSel * 1000);
+  const list = () => { const l = obj(s, 13, 88, 454, 226, { display: 'flex', flexDirection: 'column' }); l.classList.add('scroll'); return l; };
+  if (calMode === 0) {
+    title.textContent = `${GG[sel.getDay()]} ${sel.getDate()} ${MM[sel.getMonth()]}${calSel === today ? TRS(' (oggi)', ' (today)') : ''}`;
+    const l = list(), evs = calDay(calSel);
+    if (!evs.length) label(l, TRS('nessun evento', 'no events'), 14, C.FAINT, 13, 10);
+    evs.forEach((c) => { const on = !c.a && c.s <= now && c.e > now; kvRow(l, escapeHtml(calTxt(c, calSel)), '', null, { color: on ? C.OK : c.a ? C.BLUE : C.TEXT }); });
+  } else if (calMode === 1) {
+    const mon = dayAdd(calSel, -((sel.getDay() + 6) % 7)), sun = dayAdd(mon, 6), a = new Date(mon * 1000), z = new Date(sun * 1000);
+    title.textContent = `${a.getDate()} ${MM[a.getMonth()]} - ${z.getDate()} ${MM[z.getMonth()]}`;
+    const l = list();
+    for (let d = 0; d < 7; d++) {
+      const day = dayAdd(mon, d), dv = new Date(day * 1000), evs = calDay(day);
+      const r = obj(l, 0, 0, 454, 24, { position: 'relative', flex: '0 0 24px' });
+      label(r, `${GG[dv.getDay()]} ${dv.getDate()}`, 14, day === today ? C.ACCENT : C.MUTED, 13, 4);
+      if (!evs.length) label(r, '-', 12, C.FAINT, 90, 6);
+      evs.forEach((c, k) => {
+        const rr = k ? obj(l, 0, 0, 454, 20, { position: 'relative', flex: '0 0 20px' }) : r;
+        const t = label(rr, escapeHtml(calTxt(c, day, true)), 12, c.a ? C.BLUE : C.TEXT, 90, k ? 2 : 6);
+        Object.assign(t.style, { width: '350px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+      });
+    }
+  } else {
+    const first = new Date(sel.getFullYear(), sel.getMonth() + calMonthOfs, 1);
+    title.textContent = `${MM[first.getMonth()]} ${first.getFullYear()}`;
+    for (let c = 0; c < 7; c++) label(s, GG[(c + 1) % 7], 12, C.FAINT, 30 + c * 62 + 16, 88);
+    const lead = (first.getDay() + 6) % 7, nd = new Date(first.getFullYear(), first.getMonth() + 1, 0).getDate();
+    for (let dd = 1; dd <= nd; dd++) {
+      const cell = lead + dd - 1, day = Math.floor(new Date(first.getFullYear(), first.getMonth(), dd).getTime() / 1000);
+      const bt = B(String(dd), 30 + (cell % 7) * 62, 106 + Math.floor(cell / 7) * 34, 56, 30, () => { calSel = day; calMode = 0; calMonthOfs = 0; }, day === today ? C.ACCENT : C.TEXT, day === today ? C.ACCENT : C.BG);
+      if (calDay(day).length) rrect(bt, 24, 22, 6, 4, 2, C.BLUE);
+    }
+  }
+}
 function buildTileHome(t) {
   UI.hm = {};
   const h = UI.hm;
@@ -1062,10 +1143,7 @@ function buildTileHome(t) {
   h.time.style.cursor = 'pointer';   // tocca l'ora: timer e pomodoro
   h.time.addEventListener('click', (e) => { if (realMs() - lastDragAt < 300) return; e.stopPropagation(); tmMenuOpen(); });
   // pomodoro disegnato accanto alla riga sotto l'ora: anche lei apre timer e pomodoro
-  const tom = obj(t, 13, 85, 14, 16, { cursor: 'pointer' });
-  rrect(tom, 0, 3, 14, 13, 6, C.BAD); rrect(tom, 3, 1, 8, 3, 1, C.OK); rrect(tom, 6, 0, 2, 3, 0, C.OK);
-  h.date = label(t, '', 14, C.MUTED, 33, 86); Object.assign(h.date.style, { width: '264px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', cursor: 'pointer' });
-  for (const o of [tom, h.date]) o.addEventListener('click', (e) => { if (realMs() - lastDragAt < 300) return; e.stopPropagation(); tmMenuOpen(); });
+  h.date = label(t, '', 14, C.MUTED, 13, 86); Object.assign(h.date.style, { width: '284px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
   h.icon = obj(t, 310, 9, 44, 44);
   h.temp = label(t, '', 54, C.TEXT, 362, -1); h.temp.classList.add('pctl');
   h.desc = label(t, '', 12, C.MUTED, 310, 56);
@@ -1087,7 +1165,17 @@ function buildTileHome(t) {
     const right = label(b, '', 12, C.MUTED, 303, y + 2); Object.assign(right.style, { width: '138px', textAlign: 'right' });
     return { blk, pct, info, right };
   });
-  h.pcBox = tbox(t, 13, 206, 454, 40, 'pc');
+  h.pcBox = tbox(t, 13, 206, 314, 40, 'pc');
+  const icon = (x, fn, draw) => {
+    const bt = tbtn(t, '', 40, 40, (e) => { if (realMs() - lastDragAt < 300) return; fn(); });
+    bt.style.left = x + 'px'; bt.style.top = '206px'; draw(bt);
+  };
+  icon(335, () => tmMenuOpen(1), (b) => { rrect(b, 10, 13, 20, 17, 8, C.BAD); rrect(b, 14, 10, 12, 4, 2, C.OK); rrect(b, 19, 6, 2, 5, 1, C.OK); });
+  icon(381, () => tmMenuOpen(2), (b) => { obj(b, 9, 11, 22, 22, { border: `2px solid ${C.TEXT}`, borderRadius: '11px', boxSizing: 'border-box' }); rrect(b, 16, 6, 8, 3, 1, C.TEXT); rrect(b, 19, 15, 2, 8, 1, C.ACCENT); });
+  icon(427, () => calViewOpen(), (b) => {
+    obj(b, 9, 10, 22, 21, { border: `2px solid ${C.TEXT}`, borderRadius: '3px', boxSizing: 'border-box' }); rrect(b, 9, 10, 22, 6, 2, C.BLUE);
+    rrect(b, 13, 7, 2, 6, 1, C.TEXT); rrect(b, 25, 7, 2, 6, 1, C.TEXT); for (let k = 0; k < 4; k++) rrect(b, 13 + (k % 2) * 8, 19 + Math.floor(k / 2) * 5, 4, 3, 0, C.MUTED);
+  });
   goTo(h.pcBox, 6);                                                // riquadro pc -> pagina pc
   h.pc = label(h.pcBox, '', 14, C.TEXT, 13, 9);
   homeRedraw();
@@ -1101,7 +1189,12 @@ function homeTick() {
   const ME = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
   if (TM.mode) {   // timer in corso: al posto della data, fase e ora di fine (il conto alla rovescia e' nella testata)
     setText(h.date, TRS(`${tmLabel()} · fine ${fmtHm(nowEpoch() + tmLeft())}`, `${tmLabel()} · ends ${fmtHm(nowEpoch() + tmLeft())}`), tmColor());
-  } else setText(h.date, `${P.lang ? GE[p.wd] : GI[p.wd]} ${p.d} ${(P.lang ? ME : MI)[p.mo - 1]} · ${WX.city.toLowerCase()}`, C.MUTED);
+  } else {
+    const now = nowEpoch(), ev = CAL.find((e) => e.e > now);   // calendario: in corso o entro un'ora
+    if (ev && ev.s <= now) setText(h.date, TRS(`in corso: ${escapeHtml(ev.t)} · fino ${fmtHm(ev.e)}`, `now: ${escapeHtml(ev.t)} · until ${fmtHm(ev.e)}`), C.OK);
+    else if (ev && ev.s - now <= 3600) setText(h.date, TRS(`tra ${Math.ceil((ev.s - now) / 60)} min: ${escapeHtml(ev.t)}`, `in ${Math.ceil((ev.s - now) / 60)} min: ${escapeHtml(ev.t)}`), C.BLUE);
+    else setText(h.date, `${P.lang ? GE[p.wd] : GI[p.wd]} ${p.d} ${(P.lang ? ME : MI)[p.mo - 1]} · ${WX.city.toLowerCase()}`, C.MUTED);
+  }
   setText(h.desc, `${wxDesc(WX.code)} ${WX.tmax}/${WX.tmin}°`);   // oggi; domani e' nelle previsioni della settimana
 }
 function homeRedraw() {
@@ -1125,7 +1218,7 @@ function homeRedraw() {
   else setText(h.row[1].right, TRS(`modelli ${ok}/4 ok`, `models ${ok}/4 ok`), ok === 4 ? C.MUTED : C.WARN);
   h.pcBox._lg.textContent = `pc · ${PC.host}`;
   const k = (s) => `<span style="color:${C.MUTED};font-size:12px">${s}</span>`;
-  setText(h.pc, `${k('cpu ')}${PC.cpu}% ${PC.cpuT}°&nbsp;&nbsp;&nbsp;${k('ram ')}${PC.ram}%&nbsp;&nbsp;&nbsp;${k('gpu ')}${PC.gpu}% ${PC.gpuT}°&nbsp;&nbsp;&nbsp;${k(TRS('disco ', 'disk '))}${PC.disk}%`);
+  setText(h.pc, `${k('cpu ')}${PC.cpu}% ${PC.cpuT}°&nbsp;&nbsp;&nbsp;${k('ram ')}${PC.ram}%&nbsp;&nbsp;&nbsp;${k('gpu ')}${PC.gpu}% ${PC.gpuT}°`);
 }
 
 // ---- tile 6: pc (dati di esempio; sul dispositivo arrivano da SmallTV Monitor 1.1) ----
@@ -1646,7 +1739,7 @@ function tmTick() {
 }
 let TMENU = null;
 function tmMenuClose() { if (TMENU) { TMENU.remove(); TMENU = null; } }
-function tmMenuOpen() {
+function tmMenuOpen(only) {
   tmMenuClose();
   const s = obj(scr, 0, 0, 480, 320, { background: 'rgba(20,20,19,.8)', zIndex: 60 });
   s.addEventListener('click', (e) => { e.stopPropagation(); tmMenuClose(); });
@@ -1657,11 +1750,19 @@ function tmMenuOpen() {
   b.addEventListener('click', (e) => e.stopPropagation());
   const btn = (txt, x, y, w, h, fn, color) => { const bt = tbtn(b, txt, w, h, () => { tmMenuClose(); if (fn) { fn(); tmChanged(); } }, { color, size: 14 }); bt.style.left = x + 'px'; bt.style.top = y + 'px'; };
   if (!TM.mode) {
-    label(b, TRS('pomodoro · focus/pausa in minuti', 'pomodoro · focus/break in minutes'), 12, C.MUTED, 20, 12);
-    POMO_PRESETS.forEach(([f, br], i) => btn(`${f}/${br}`, 20 + i * 90, 30, 80, 40, () => { pomoPreset(i); TM.n = 0; tmStart(TM_FOCUS, POMO.FOCUS); }, C.ACCENT));
-    label(b, 'timer', 12, C.MUTED, 20, 82);
-    [5, 10, 15, 30].forEach((m, i) => btn(`${m} min`, 20 + i * 67, 100, 58, 40, () => tmStart(TM_TIMER, m * 60), C.TEXT));
-    btn(TRS('annulla', 'cancel'), 20, 158, 258, 38, null, C.MUTED);
+    let y = 12;
+    if (only !== 2) {
+      label(b, TRS('pomodoro · focus/pausa in minuti', 'pomodoro · focus/break in minutes'), 12, C.MUTED, 20, y);
+      POMO_PRESETS.forEach(([f, br], i) => btn(`${f}/${br}`, 20 + i * 90, y + 18, 80, 40, () => { pomoPreset(i); TM.n = 0; tmStart(TM_FOCUS, POMO.FOCUS); }, C.ACCENT));
+      y += 70;
+    }
+    if (only !== 1) {
+      label(b, 'timer', 12, C.MUTED, 20, y);
+      [5, 10, 15, 30].forEach((m, i) => btn(`${m} min`, 20 + i * 67, y + 18, 58, 40, () => tmStart(TM_TIMER, m * 60), C.TEXT));
+      y += 70;
+    }
+    btn(TRS('annulla', 'cancel'), 20, y + 6, 258, 38, null, C.MUTED);
+    if (only) b.style.height = (y + 62) + 'px';
   } else {
     label(b, tmLabel(), 22, tmColor(), 20, 30);
     if (TM.mode !== TM_TIMER) { const [f, br, l] = POMO_PRESETS[TM.pre]; label(b, TRS(`pomodoro ${f}/${br}, pausa lunga ${l}`, `pomodoro ${f}/${br}, long break ${l}`), 12, C.MUTED, 20, 64); }
@@ -1952,7 +2053,7 @@ function clearScreen() {
   momentClose(); PMENU = null; NC = null;
   // l'avviso a schermo intero sopravvive ai rebuild del dashboard (stesso inizio)
   if (NT) { if (pending === ST.MAIN) { G.ntPend = NT.kind; G.ntT0 = NT.t0; } noticeClose(); }
-  tmMenuClose(); wxWeekClose(); shadeClose();
+  tmMenuClose(); wxWeekClose(); shadeClose(); calViewClose();
   scr.innerHTML = '';
   UI = {}; hdrStatus = null; pinDots = pinMsg = tokMsg = null; activeTA = null;
 }
@@ -2180,7 +2281,7 @@ function initPanel() {
 }
 
 // accesso per tools/capture_screens.js (immagini del README)
-window.__sim = { API, G, ST, P, boot, requestState, setTile, refreshUiValues, dashTick, showMoment, momentClose, ccEvent, ccBusySet, uiSettings, shadeOpen, shadeClose, alPush, noticeClose, tmMenuOpen, wxWeekOpen, tmStart, TM, TM_TIMER, TM_FOCUS, TM_BREAK, pauseMenuOpen, pauseMenuClose, nightClockShow, nightClockClose };
+window.__sim = { API, G, ST, P, boot, requestState, setTile, refreshUiValues, dashTick, showMoment, momentClose, ccEvent, ccBusySet, calViewOpen, CAL, calShow, pauseSet, uiSettings, shadeOpen, shadeClose, alPush, noticeClose, tmMenuOpen, wxWeekOpen, tmStart, TM, TM_TIMER, TM_FOCUS, TM_BREAK, pauseMenuOpen, pauseMenuClose, nightClockShow, nightClockClose };
 initPanel();
 applyBrightness();
 boot(true);
