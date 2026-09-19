@@ -16,7 +16,7 @@ const C = {
   BORDER: '#3A3834', TEXT: '#E8E6DF', MUTED: '#8E8B82', FAINT: '#5C5A55', ACCENT: '#D97757',
   OK: '#9BC08A', WARN: '#E0B25A', BAD: '#E06C5A', BLUE: '#7DB9D6', LILAC: '#B7A6E0',
 };
-const CFG = { PIN_LEN: 4, MAX_PIN_ATTEMPTS: 10, LOCKOUT_BASE_SEC: 60, ACCT_MAX: 4, FW: '3.9' };
+const CFG = { PIN_LEN: 4, MAX_PIN_ATTEMPTS: 10, LOCKOUT_BASE_SEC: 60, ACCT_MAX: 4, FW: '3.9.1' };
 const DEMO_PIN = '1234';
 
 const $ = (id) => document.getElementById(id);
@@ -46,7 +46,7 @@ const pad2 = (n) => String(n).padStart(2, '0');
 
 // ---------- stato persistente (NVS simulata) ----------
 const TZ_ROME = 99;
-const P = { lang: 0, tz: TZ_ROME, poll: 120, slide: 0, heatm: 3, bri: 1, pinatt: 0, rstal: true, ccal: 2, pcsnd: true, night: 0, nightp: true, dim: 0, pause: false, pauseUntil: 0, clock: 0, nightclk: true, nightbri: 0 };
+const P = { lang: 0, tz: TZ_ROME, poll: 120, slide: 0, heatm: 3, bri: 1, pinatt: 0, rstal: true, ccal: 2, ccclose: 2, pcsnd: true, night: 0, nightp: true, dim: 0, pause: false, pauseUntil: 0, clock: 0, nightclk: true, nightbri: 0 };
 const TRS = (pt, en) => (P.lang ? en : pt);
 
 // ---------- stato app ----------
@@ -1473,7 +1473,7 @@ function ccEvent(ev, proj, dur) {
 function ccShow(t0) {
   const e = G.cc, done = e.ev === 'done', ask = e.ev === 'ask';
   noticeShow({
-    kind: NT_CLAUDE, col: done ? C.OK : C.ACCENT, maxMs: 30 * 60000, hop: done, ask: !done,
+    kind: NT_CLAUDE, col: done ? C.OK : C.ACCENT, maxMs: [5, 10, 30, 0][P.ccclose] * 1000 || Infinity, hop: done, ask: !done,
     legend: e.proj ? `claude code · ${e.proj}` : 'claude code',
     top: done ? TRS('claude ha finito', 'claude is done') : TRS('claude ti aspetta', 'claude needs you'),
     big: done && e.dur >= 0 ? (e.dur >= 60 ? Math.round(e.dur / 60) : e.dur) : -1, unit: e.dur >= 60 ? ' min' : ' s',
@@ -1588,6 +1588,8 @@ function uiSettings() {
   const CCL = [TRS('spento', 'off'), TRS('sempre', 'always'), TRS('oltre 1 min', 'over 1 min'), TRS('oltre 5 min', 'over 5 min')];
   kvRow(lst, TRS('suoni sul pc', 'sounds on pc'), P.pcsnd ? TRS('acceso', 'on') : TRS('spento', 'off'), () => { P.pcsnd = !P.pcsnd; requestState(ST.SETTINGS); });
   kvRow(lst, TRS('avvisi claude code', 'claude code alerts'), CCL[P.ccal], () => { P.ccal = (P.ccal + 1) % 4; requestState(ST.SETTINGS); });
+  const CCC = [5, 10, 30, 0][P.ccclose];
+  kvRow(lst, TRS('chiudi avviso claude', 'close claude alert'), CCC ? TRS(`dopo ${CCC} s`, `after ${CCC} s`) : TRS('mai', 'never'), () => { P.ccclose = (P.ccclose + 1) % 4; requestState(ST.SETTINGS); });
   kvRow(lst, TRS("luminosita'", 'brightness'), briN(), (v) => { P.bri = (P.bri + 1) % 3; applyBrightness(); setText(v, briN()); });
   const NL = ['', '22:00-07:00', '23:00-07:00', '00:00-07:00'];
   kvRow(lst, TRS('notte', 'night'), P.night ? NL[P.night] : TRS('spento', 'off'), () => { P.night = (P.night + 1) % 4; requestState(ST.SETTINGS); });

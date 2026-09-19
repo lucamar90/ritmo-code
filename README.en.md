@@ -9,7 +9,7 @@ No computer running, no app, no cloud.
 
 [Italiano](README.md) · **English**
 
-<img src="https://img.shields.io/badge/firmware-v3.9-D97757?style=for-the-badge" alt="firmware v3.9">
+<img src="https://img.shields.io/badge/firmware-v3.9.1-D97757?style=for-the-badge" alt="firmware v3.9.1">
 <img src="https://img.shields.io/badge/ESP32--S3-AXS15231B%20480×320-1B1A18?style=for-the-badge" alt="ESP32-S3 AXS15231B">
 <img src="https://img.shields.io/badge/LVGL-9.2.2-9BC08A?style=for-the-badge" alt="LVGL 9.2.2">
 <img src="https://img.shields.io/badge/accounts-up%20to%204-8E8B82?style=for-the-badge" alt="up to 4 accounts">
@@ -188,7 +188,8 @@ even while you are looking at another window or away from the desk.
 
 The hooks only call `http://127.0.0.1:8765`, and the app forwards the alert to the device, which accepts
 it only from the paired PC. The project folder name is sent, nothing from the session itself. The alert
-stays on screen until you tap it or write to Claude again (30 minutes at most); at night, with the screen
+closes by itself after 5, 10 or 30 seconds (*Settings → close claude alert*, 30 s by default) or stays until
+you tap it or write to Claude again (*never*); at night, with the screen
 off or the night clock on, it does not show. In *Settings → claude code alerts* choose when to show it:
 **always**, only for tasks **over 1 min** (default) or **over 5 min**, or **off**. Permission requests
 always show unless it is *off*.

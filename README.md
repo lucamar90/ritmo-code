@@ -9,7 +9,7 @@ Senza computer acceso, senza app, senza cloud.
 
 **Italiano** · [English](README.en.md)
 
-<img src="https://img.shields.io/badge/firmware-v3.9-D97757?style=for-the-badge" alt="firmware v3.9">
+<img src="https://img.shields.io/badge/firmware-v3.9.1-D97757?style=for-the-badge" alt="firmware v3.9.1">
 <img src="https://img.shields.io/badge/ESP32--S3-AXS15231B%20480×320-1B1A18?style=for-the-badge" alt="ESP32-S3 AXS15231B">
 <img src="https://img.shields.io/badge/LVGL-9.2.2-9BC08A?style=for-the-badge" alt="LVGL 9.2.2">
 <img src="https://img.shields.io/badge/account-fino%20a%204-8E8B82?style=for-the-badge" alt="fino a 4 account">
@@ -184,7 +184,8 @@ anche se stai guardando un'altra finestra o ti sei alzato dalla scrivania.
 
 Gli hook chiamano solo `http://127.0.0.1:8765` e l'app inoltra l'avviso al dispositivo, che lo accetta
 solo dal PC collegato. Arriva il nome della cartella del progetto, niente del contenuto della sessione.
-A schermo l'avviso resta finché non lo tocchi o scrivi di nuovo a Claude (al massimo 30 minuti); di
+A schermo l'avviso si chiude da solo dopo 5, 10 o 30 secondi (*Impostazioni → chiudi avviso claude*, 30 s
+predefinito) oppure resta finché non lo tocchi o scrivi di nuovo a Claude (*mai*); di
 notte, con lo schermo spento o l'orologio notturno, non compare. In *Impostazioni → avvisi claude code*
 scegli quando mostrarlo: **sempre**, solo per lavori **oltre 1 min** (predefinito) o **oltre 5 min**,
 oppure **spento**. Le richieste di permesso compaiono sempre, tranne con *spento*.

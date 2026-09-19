@@ -263,6 +263,8 @@ static int g_slideSec = 0;                // slideshow: 0=off, 5/10/15/30s (conf
 static int g_heatMode = 3;                // 0=oggi 1=7g 2=30g 3=tutto (config, NVS)
 static bool g_resetAlert = true;          // avviso quando una finestra oltre l'80% si libera (NVS "rstal")
 static bool g_pcSound = true;             // suoni e notifiche sul PC per gli avvisi (NVS "pcsnd")
+static int  g_ccCloseIdx = 2;             // chiude da solo l'avviso di Claude: 5 s, 10 s, 30 s, mai (NVS "ccclose")
+static const uint8_t CC_CLOSE_S[4] = {5, 10, 30, 0};
 static int  g_ccAlert = 2;                // avvisi di Claude Code: 0 spento, 1 sempre, 2/3 fine lavoro oltre 1/5 min (NVS "ccal")
 
 // ---- Diagnostica prestazioni (Impostazioni -> Contatore FPS, NVS "perf") ----
@@ -834,6 +836,8 @@ static void load_persisted() {
   g_pomoToday = g_prefs.getInt("pomn", 0);
   g_pomoDay = g_prefs.getLong("pomday", 0);
   g_pcSound = g_prefs.getBool("pcsnd", true);
+  g_ccCloseIdx = g_prefs.getInt("ccclose", 2);
+  if (g_ccCloseIdx < 0 || g_ccCloseIdx > 3) g_ccCloseIdx = 2;
   g_ccAlert = g_prefs.getInt("ccal", 2);
   if (g_ccAlert < 0 || g_ccAlert > 3) g_ccAlert = 2;
   g_nightIdx = g_prefs.getInt("night", 0);
@@ -3642,7 +3646,7 @@ static void notice_tick() {
 
 // ---- Claude Code: fine lavoro / permesso ----
 // Hook di Claude Code -> Ritmo Code PC Monitor -> POST /claude (subito) o data.json (al giro dopo).
-// Resta finche' non lo tocchi o scrivi di nuovo a Claude (evento "busy"), al massimo 30 min.
+// Si chiude da solo dopo 5, 10 o 30 s (impostazione), con un tocco o quando scrivi di nuovo a Claude ("busy").
 static const uint16_t CC_MIN_S[4] = {0, 0, 60, 300};   // durata minima del lavoro per l'avviso di fine
 static long g_ccSeen = 0;                      // id dell'ultimo evento gia' visto (crescono sempre)
 static int  g_ccDur = -1;
@@ -3668,7 +3672,8 @@ static void cc_event(long id, const char *ev, const char *proj, int dur, int age
 static void cc_show() {
   NoticeText n = {};
   bool done = !strcmp(g_ccEv, "done"), ask = !strcmp(g_ccEv, "ask");
-  n.kind = NT_CLAUDE; n.col = done ? C_OK : C_ACCENT; n.maxMs = 30UL * 60UL * 1000UL;
+  n.kind = NT_CLAUDE; n.col = done ? C_OK : C_ACCENT;
+  n.maxMs = CC_CLOSE_S[g_ccCloseIdx] ? CC_CLOSE_S[g_ccCloseIdx] * 1000UL : 0xFFFFFFFFUL;   // "mai": solo tocco o nuovo prompt
   strlcpy(n.ev, g_ccEv, sizeof(n.ev));
   n.hop = done; n.ask = !done;
   if (g_ccProj[0]) snprintf(n.legend, sizeof(n.legend), "claude code " U_MIDDOT " %s", g_ccProj);
@@ -4243,6 +4248,11 @@ static void settings_action_cb(lv_event_t *e) {
       g_prefs.putBool("rstal", g_resetAlert);
       request_state(ST_SETTINGS);
       break;
+    case 25:                                           // chiudi avviso claude: 5 s -> 10 s -> 30 s -> mai
+      g_ccCloseIdx = (g_ccCloseIdx + 1) % 4;
+      g_prefs.putInt("ccclose", g_ccCloseIdx);
+      request_state(ST_SETTINGS);
+      break;
     case 24:                                           // suoni e notifiche sul pc
       g_pcSound = !g_pcSound;
       g_prefs.putBool("pcsnd", g_pcSound);
@@ -4292,6 +4302,10 @@ static void ui_settings() {
          C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)24);
   kv_row(lst, TRS("avvisi claude code", "claude code alerts"), g_lang ? CC_LBL_EN[g_ccAlert] : CC_LBL_IT[g_ccAlert],
          C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)23);
+  char ccc[16];
+  if (CC_CLOSE_S[g_ccCloseIdx]) snprintf(ccc, sizeof(ccc), TRS("dopo %d s", "after %d s"), CC_CLOSE_S[g_ccCloseIdx]);
+  else                          strcpy(ccc, TRS("mai", "never"));
+  kv_row(lst, TRS("chiudi avviso claude", "close claude alert"), ccc, C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)25);
   kv_row(lst, TRS("luminosità", "brightness"),    bri_label(),           C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)3, &g_briLbl);
   static const char *NIGHT_LBL[4] = {"", "22:00-07:00", "23:00-07:00", "00:00-07:00"};
   char dim[16];
