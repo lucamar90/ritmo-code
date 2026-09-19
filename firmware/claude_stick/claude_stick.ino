@@ -2710,9 +2710,9 @@ static void build_tile_home(lv_obj_t *t) {
     lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
   }
 
-  // centrato tra la riga del pomodoro (lettere fino a y 93) e il riquadro pc (y 206): 19 sopra e 19 sotto;
-  // righe del metro a passo 30, margini pari
-  lv_obj_t *b = tbox(t, 13, 112, 454, 75, "claude");
+  // centrato tra la riga della data (lettere fino a y 98) e il riquadro pc (y 206): 17 sopra e 17 sotto;
+  // righe del metro a passo 30
+  lv_obj_t *b = tbox(t, 13, 115, 454, 74, "claude");
   const char *k[2] = {"5h", TRS("sett.", "week")};
   for (int i = 0; i < 2; i++) {
     int y = 13 + i * 30;

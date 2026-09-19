@@ -1011,7 +1011,7 @@ function buildTileHome(t) {
   h.desc = label(t, '', 12, C.MUTED, 310, 56);
   h.rain = label(t, '', 12, C.MUTED, 310, 72);
   h.sun = label(t, '', 12, C.FAINT, 310, 88);
-  const b = tbox(t, 13, 112, 454, 75, 'claude');
+  const b = tbox(t, 13, 115, 454, 74, 'claude');
   h.row = [0, 1].map((i) => {
     const y = 13 + i * 30;
     label(b, i ? TRS('sett.', 'week') : '5h', 14, C.MUTED, 13, y);
