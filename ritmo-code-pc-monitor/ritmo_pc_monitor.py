@@ -607,7 +607,13 @@ SOUNDS = {
     "thr":   [(440, 0.18), (0, 0.06), (440, 0.3)],               # soglia di utilizzo
     "reset": [(523, 0.15), (784, 0.4)],                          # finestra di nuovo disponibile
 }
-DEFAULT_NOTIFY = {"sound": True, "toast": True, "volume": 60}
+# suoni di Windows (MessageBeep): seguono il volume dei Suoni di sistema e arrivano anche nelle
+# sessioni remote, dove le melodie qui sopra (PlaySound) possono restare mute
+BEEPS = {"break": 0x40, "cycle": 0x40, "reset": 0x40,        # asterisco
+         "timer": 0x30, "perm": 0x30, "ask": 0x30,           # esclamazione
+         "thr": 0x10,                                        # errore critico
+         "focus": 0x0, "done": 0x0}                          # predefinito
+DEFAULT_NOTIFY = {"sound": True, "toast": True, "volume": 60, "style": "windows"}
 _sound_lock = threading.Lock()
 _sound_cache = {}
 TRAY = None                                   # icona nell'area di notifica, se attiva
@@ -644,7 +650,11 @@ def _chime(notes, volume):
     return buf.getvalue()
 
 
-def play_sound(ev, volume):
+def play_sound(ev, volume, style="windows"):
+    if style == "windows":
+        if ev in BEEPS:
+            ctypes.windll.user32.MessageBeep(BEEPS[ev])
+        return
     import winsound
     notes = SOUNDS.get(ev)
     if not notes or volume <= 0:
@@ -665,7 +675,7 @@ def pc_notify(ev, title, msg):
     if s["toast"] and TRAY and title:
         TRAY.balloon(title, msg)
     if s["sound"]:
-        play_sound(ev, int(s["volume"]))
+        play_sound(ev, int(s["volume"]), s["style"])
 
 
 STATUS_PAGE = """<!doctype html><html lang="it"><head><meta charset="utf-8">
@@ -696,10 +706,12 @@ code{color:var(--ac)}
  mostra quando Claude ha finito o aspetta un permesso. Valgono per le sessioni di Claude Code aperte da ora in poi.</p></div>
 <div class=box><span class=lg>suoni e notifiche</span>
  <div class=form><label><input type=checkbox id=snd> suono</label><label><input type=checkbox id=tst> notifica di Windows</label>
- <label>volume <input type=range id=vol min=0 max=100 step=5></label><button id=try>Prova</button></div>
+ <select id=sty><option value=windows>suoni di Windows</option><option value=ritmo>melodie Ritmo Code</option></select>
+ <label id=voll>volume <input type=range id=vol min=0 max=100 step=5></label><button id=try>Prova</button></div>
  <p class=k style="margin:10px 0 0">Quando il dispositivo mostra un avviso (fine del timer, pausa e ripresa del pomodoro, Claude
  ha finito o aspetta, soglie di utilizzo) questo PC suona e mostra una notifica. Sul dispositivo si attiva in
- <i>Impostazioni &rarr; suoni sul pc</i>; di notte resta muto.</p></div>
+ <i>Impostazioni &rarr; suoni sul pc</i>; di notte resta muto. I suoni di Windows seguono il volume dei
+ <i>Suoni di sistema</i> e si sentono anche in desktop remoto; le melodie hanno un volume proprio.</p></div>
 </main><script>
 var $=function(i){return document.getElementById(i)};
 function pc(){fetch('/data.json').then(function(r){return r.json()}).then(function(d){
@@ -725,10 +737,10 @@ function hks(){fetch('/api/hooks').then(function(r){return r.json()}).then(hk)}
 function hkset(on){fetch('/api/hooks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({install:on})})
  .then(function(r){return r.json()}).then(hk)}
 $('hkon').onclick=function(){hkset(true)};$('hkoff').onclick=function(){hkset(false)};
-function ns(j){$('snd').checked=j.sound;$('tst').checked=j.toast;$('vol').value=j.volume}
-function nset(extra){var b={sound:$('snd').checked,toast:$('tst').checked,volume:+$('vol').value};for(var k in extra)b[k]=extra[k];
+function ns(j){$('snd').checked=j.sound;$('tst').checked=j.toast;$('vol').value=j.volume;$('sty').value=j.style;$('voll').hidden=j.style!='ritmo'}
+function nset(extra){var b={sound:$('snd').checked,toast:$('tst').checked,volume:+$('vol').value,style:$('sty').value};for(var k in extra)b[k]=extra[k];
  fetch('/api/notify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}).then(function(r){return r.json()}).then(ns)}
-$('snd').onchange=$('tst').onchange=$('vol').onchange=function(){nset()};$('try').onclick=function(){nset({test:true})};
+$('snd').onchange=$('tst').onchange=$('vol').onchange=$('sty').onchange=function(){nset()};$('try').onclick=function(){nset({test:true})};
 fetch('/api/notify').then(function(r){return r.json()}).then(ns);
 pc();setInterval(pc,2000);scan();hks();setInterval(hks,5000);
 </script></body></html>"""
@@ -821,7 +833,12 @@ def make_handler(sampler, lhm, port):
                 cfg = load_config()
                 for k, v in DEFAULT_NOTIFY.items():
                     if k in req:
-                        cfg[k] = max(0, min(100, int(req[k]))) if k == "volume" else bool(req[k])
+                        if k == "volume":
+                            cfg[k] = max(0, min(100, int(req[k])))
+                        elif k == "style":
+                            cfg[k] = "ritmo" if req[k] == "ritmo" else "windows"
+                        else:
+                            cfg[k] = bool(req[k])
                 save_config(cfg)
                 if req.get("test"):
                     threading.Thread(target=pc_notify, args=("break", "Ritmo Code - prova",
