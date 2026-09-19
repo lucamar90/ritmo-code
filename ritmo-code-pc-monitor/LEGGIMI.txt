@@ -23,6 +23,7 @@ ICONA NELL'AREA DI NOTIFICA (vicino all'orologio)
 - passandoci sopra: CPU, GPU, RAM e se il dispositivo sta leggendo i dati
 - doppio clic: pagina di stato e collegamento
 - clic destro: apri il pannello del dispositivo, esci
+- clic destro -> Timer e pomodoro: avvia sul dispositivo un pomodoro o un timer, fermalo o salta la fase
 
 AVVISI DI CLAUDE CODE
 Nella pagina http://127.0.0.1:8765/ premi "Attiva gli avvisi": l'app aggiunge tre hook a

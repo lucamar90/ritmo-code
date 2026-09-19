@@ -429,6 +429,10 @@ static void moment_tick();
 static void moment_close();
 static void cc_event(long id, const char *ev, const char *proj, int dur, int age);
 static int g_setGroup = 0;
+static bool g_ccFocusDefer = false;          // avvisi di Claude durante il focus: rimandati alla pausa (NVS "ccfocus")
+static bool g_ccDeferred = false;            // un avviso di Claude aspetta la fine del focus
+static bool tm_action(int opt);               // comandi del timer (menu del dispositivo e PC)
+static uint32_t tm_left_s();
 // pannello a tendina: il touch riconosce il gesto (giu' dalla testata / su per chiudere), il loop apre
 static volatile int g_shadeReq = 0;               // 1 apri, 2 chiudi
 static lv_obj_t *g_shade = nullptr;
@@ -879,6 +883,7 @@ static void load_persisted() {
   g_pomoToday = g_prefs.getInt("pomn", 0);
   g_pomoDay = g_prefs.getLong("pomday", 0);
   g_pcSound = g_prefs.getBool("pcsnd", true);
+  g_ccFocusDefer = g_prefs.getBool("ccfocus", false);
   g_ccCloseIdx = g_prefs.getInt("ccclose", 2);
   if (g_ccCloseIdx < 0 || g_ccCloseIdx > 3) g_ccCloseIdx = 2;
   g_ccAlert = g_prefs.getInt("ccal", 2);
@@ -1576,8 +1581,16 @@ static void handleApiStatus() {
     snprintf(b, sizeof(b), "%s[%u,%u]", i ? "," : "", (unsigned)g_weeks[i].reset, g_weeks[i].peak);
     o += b;
   }
-  snprintf(b, sizeof(b), "],\"pause_until\":%u,\"heat_mode\":%d,\"wx\":{\"ok\":%s,\"city\":", (unsigned)g_pauseUntil, g_heatMode,
-           g_wx.ok ? "true" : "false");
+  snprintf(b, sizeof(b), "],\"pause_until\":%u,\"heat_mode\":%d,", (unsigned)g_pauseUntil, g_heatMode);
+  o += b;
+  {                                                // timer e pomodoro (per il menu dell'icona sul PC)
+    char tl[40] = "";
+    if (g_tmMode) tm_label(tl, sizeof(tl));
+    snprintf(b, sizeof(b), "\"timer\":{\"mode\":%d,\"left\":%u,\"label\":\"%s\"},", g_tmMode,
+             (unsigned)(g_tmMode ? tm_left_s() : 0), tl);
+    o += b;
+  }
+  snprintf(b, sizeof(b), "\"wx\":{\"ok\":%s,\"city\":", g_wx.ok ? "true" : "false");
   o += b;
   json_str(o, g_wxCity);
   snprintf(b, sizeof(b), ",\"temp\":%.1f,\"code\":%d,\"day\":%s,\"tmax\":%.1f,\"tmin\":%.1f,\"tmax2\":%.1f,\"tmin2\":%.1f,\"code2\":%d,",
@@ -1864,6 +1877,29 @@ static void handleClaudeEvent() {
   cc_event(g_web->arg("id").toInt(), ev.c_str(), pj, g_web->hasArg("dur") ? g_web->arg("dur").toInt() : -1, 0);
   g_web->send(204, "text/plain", "");
 }
+// timer e pomodoro dal PC (menu dell'icona di Ritmo Code PC Monitor): solo dal PC collegato
+static void handleTimerCmd() {
+  String host = g_pcHost;
+  int c = host.indexOf(':');
+  if (c >= 0) host.remove(c);
+  IPAddress pc;
+  if (!g_pcHost[0] || (pc.fromString(host) && g_web->client().remoteIP() != pc)) {
+    g_web->send(403, "application/json", "{\"ok\":false}");
+    return;
+  }
+  String a = g_web->arg("a");
+  int opt = -1;
+  if (a == "pomo")       opt = constrain(g_web->arg("p").toInt(), 0, 2);
+  else if (a == "timer") opt = 100 + constrain(g_web->arg("m").toInt(), 1, 180);
+  else if (a == "stop")  opt = 10;
+  else if (a == "skip")  opt = 11;
+  else if (a == "plus")  opt = 12;
+  bool ok = opt >= 0 && tm_action(opt);
+  char st[40] = "";
+  if (g_tmMode) tm_label(st, sizeof(st));
+  String j = String("{\"ok\":") + (ok ? "true" : "false") + ",\"mode\":" + g_tmMode + ",\"label\":\"" + st + "\"}";
+  g_web->send(ok ? 200 : 409, "application/json", j);
+}
 static void handleHomePost() {
   String perr;
   if (!web_pin_ok(perr)) { g_web->send(403, "text/html; charset=utf-8", home_page(perr, false)); return; }
@@ -1915,6 +1951,7 @@ static void start_data_web() {
   g_web->on("/home", HTTP_POST, handleHomePost);
   g_web->on("/pcpair", HTTP_POST, handlePcPair);
   g_web->on("/claude", HTTP_POST, handleClaudeEvent);
+  g_web->on("/timer", HTTP_POST, handleTimerCmd);
   g_web->on("/update", HTTP_GET, handleUpdateGet);
   g_web->on("/update", HTTP_POST, handleUpdatePost, handleUpdateUpload);
   g_web->onNotFound([]() { g_web->send(404, "application/json", "{\"error\":\"not_found\"}"); });
@@ -3773,6 +3810,7 @@ static void cc_event(long id, const char *ev, const char *proj, int dur, int age
   if (!strcmp(ev, "busy")) {                   // sei tornato a scrivere a Claude
     if (g_ntPend == NT_CLAUDE) g_ntPend = NT_NONE;
     if (g_nt.kind == NT_CLAUDE) notice_close();
+    g_ccDeferred = false;                        // l'avviso rimandato non serve piu'
     return;
   }
   if (!g_ccAlert) return;
@@ -3780,6 +3818,11 @@ static void cc_event(long id, const char *ev, const char *proj, int dur, int age
   strlcpy(g_ccEv, ev, sizeof(g_ccEv));
   strlcpy(g_ccProj, proj, sizeof(g_ccProj));
   g_ccDur = dur;
+  if (g_ccFocusDefer && g_tmMode == TM_FOCUS) {    // focus: lo mostra alla pausa (o quando fermi il pomodoro)
+    g_ccDeferred = true;
+    Serial.println("[CLAUDE] rimandato alla pausa");
+    return;
+  }
   if (g_ntPend != NT_TIMER) { g_ntPend = NT_CLAUDE; g_ntT0 = 0; }
 }
 
@@ -3920,17 +3963,24 @@ static void tm_tick() {
 // menu del timer: si apre toccando l'ora o la riga col pomodoro nella home
 static lv_obj_t *g_tmMenu = nullptr;
 static void tm_menu_close() { if (g_tmMenu) { lv_obj_delete(g_tmMenu); g_tmMenu = nullptr; } }
-static void tm_menu_cb(lv_event_t *e) {
-  int opt = (int)(intptr_t)lv_event_get_user_data(e);
-  tm_menu_close();
+// 0-2 pomodoro (impostazione), 3-6 timer 5/10/15/30 min, 10 ferma, 11 salta fase, 12 +5 min,
+// 100+m timer di m minuti (dal PC). false = comando non valido in questo momento
+static bool tm_action(int opt) {
   static const uint16_t MIN[4] = {5, 10, 15, 30};
   if (opt >= 0 && opt <= 2) { g_pomoPre = opt; g_pomoN = 0; tm_start(TM_FOCUS, POMO_FOCUS_S); }
   else if (opt >= 3 && opt <= 6) tm_start(TM_TIMER, MIN[opt - 3] * 60);
-  else if (opt == 10) { g_tmMode = TM_OFF; g_pomoN = 0; Serial.println("[TIMER] fermato"); }
-  else if (opt == 11) g_tmEndMs = millis();                   // salta la fase: tm_tick passa alla successiva
-  else if (opt == 12) { g_tmEndMs += 5UL * 60UL * 1000UL; g_tmLenS += 5 * 60; }
-  else return;                                                // annulla
+  else if (opt > 100 && opt <= 100 + 180) tm_start(TM_TIMER, (opt - 100) * 60);
+  else if (opt == 10 && g_tmMode) { g_tmMode = TM_OFF; g_pomoN = 0; Serial.println("[TIMER] fermato"); }
+  else if (opt == 11 && (g_tmMode == TM_FOCUS || g_tmMode == TM_BREAK)) g_tmEndMs = millis();   // tm_tick passa oltre
+  else if (opt == 12 && g_tmMode == TM_TIMER) { g_tmEndMs += 5UL * 60UL * 1000UL; g_tmLenS += 5 * 60; }
+  else return false;
   tm_changed();
+  return true;
+}
+static void tm_menu_cb(lv_event_t *e) {
+  int opt = (int)(intptr_t)lv_event_get_user_data(e);
+  tm_menu_close();
+  if (opt >= 0) tm_action(opt);                               // -1 = annulla
 }
 static void tm_menu_open(lv_event_t *e) {
   (void)e;
@@ -4544,6 +4594,11 @@ static void settings_action_cb(lv_event_t *e) {
         request_state(ST_SETTINGS);
       }
       break;
+    case 27:                                           // claude durante il focus: subito / alla pausa
+      g_ccFocusDefer = !g_ccFocusDefer;
+      g_prefs.putBool("ccfocus", g_ccFocusDefer);
+      request_state(ST_SETTINGS);
+      break;
     case 24:                                           // suoni e notifiche sul pc
       g_pcSound = !g_pcSound;
       g_prefs.putBool("pcsnd", g_pcSound);
@@ -4630,6 +4685,8 @@ static void ui_settings() {
       if (CC_CLOSE_S[g_ccCloseIdx]) snprintf(ccc, sizeof(ccc), TRS("dopo %d s", "after %d s"), CC_CLOSE_S[g_ccCloseIdx]);
       else                          strcpy(ccc, TRS("mai", "never"));
       kv_row(lst, TRS("chiudi avviso claude", "close claude alert"), ccc, C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)25);
+      kv_row(lst, TRS("claude durante il focus", "claude during focus"), g_ccFocusDefer ? TRS("alla pausa", "at the break") : TRS("subito", "right away"),
+             C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)27);
       kv_row(lst, TRS("suoni sul pc", "sounds on pc"), g_pcSound ? TRS("acceso", "on") : TRS("spento", "off"),
              C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)24);
       kv_row(lst, TRS("avviso reset", "reset alert"), g_resetAlert ? TRS("sopra 80%", "above 80%") : TRS("spento", "off"),
@@ -5658,6 +5715,11 @@ void loop() {
       lv_tileview_set_tile_by_index(g_ui.tv, 0, 0, LV_ANIM_ON);
     }
 
+    // avviso di Claude rimandato: appena finisce il focus e non c'e' altro a schermo
+    if (g_ccDeferred && g_tmMode != TM_FOCUS && !g_ntPend && !g_nt.scrim) {
+      g_ccDeferred = false;
+      g_ntPend = NT_CLAUDE; g_ntT0 = 0;
+    }
     // pannello a tendina (chiesto dal gesto nel driver del touch)
     if (g_shadeReq) {
       int r = g_shadeReq; g_shadeReq = 0;

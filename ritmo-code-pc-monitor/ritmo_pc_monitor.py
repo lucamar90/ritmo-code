@@ -28,7 +28,7 @@ import winreg
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP = "ritmo-code-pc-monitor"
-VERSION = "1.3.1"
+VERSION = "1.4.0"
 DEFAULT_PORT = 8765
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "RitmoCodePcMonitor")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
@@ -922,6 +922,48 @@ class _NotifyIconData(ctypes.Structure):
                 ("guidItem", ctypes.c_byte * 16), ("hBalloonIcon", wt.HICON)]
 
 
+# ---------------------------------------------------------------------------
+# Timer e pomodoro sul dispositivo, dal menu dell'icona
+# ---------------------------------------------------------------------------
+
+# id del menu -> (azione, parametri, testo)
+TIMER_ITEMS = {
+    20: ("pomo", {"p": 0}, "Pomodoro 25/5"),
+    21: ("pomo", {"p": 1}, "Pomodoro 50/10"),
+    22: ("pomo", {"p": 2}, "Pomodoro 15/3"),
+    23: ("timer", {"m": 5}, "Timer 5 min"),
+    24: ("timer", {"m": 10}, "Timer 10 min"),
+    25: ("timer", {"m": 15}, "Timer 15 min"),
+    26: ("timer", {"m": 30}, "Timer 30 min"),
+    27: ("skip", {}, "Salta fase"),
+    28: ("plus", {}, "+5 min"),
+    29: ("stop", {}, "Ferma"),
+}
+
+
+def device_ip():
+    return DEVICE_SEEN["ip"] if DEVICE_SEEN["ip"] and time.time() - DEVICE_SEEN["at"] < 600 else load_config().get("device")
+
+
+def device_timer(ip):
+    """Stato del timer sul dispositivo ({mode, left, label}), None se non risponde (spento o bloccato dal PIN)."""
+    try:
+        return get_json(f"http://{ip}/api/status", 1.0).get("timer")
+    except Exception:
+        return None
+
+
+def timer_command(ip, action, params):
+    body = urllib.parse.urlencode({"a": action, **params}).encode()
+    try:
+        with urllib.request.urlopen(urllib.request.Request(f"http://{ip}/timer", data=body, method="POST"), timeout=3) as r:
+            return json.loads(r.read().decode("utf-8", "replace"))
+    except urllib.error.HTTPError as error:
+        return {"ok": False, "error": "comando non valido adesso" if error.code == 409 else f"HTTP {error.code}"}
+    except Exception:
+        return {"ok": False, "error": "dispositivo non raggiungibile"}
+
+
 class TrayIcon:
     """Icona con suggerimento aggiornato e menu: pagina di collegamento, pannello del dispositivo, esci."""
 
@@ -1004,6 +1046,9 @@ class TrayIcon:
         u.AppendMenuW(menu, 0x1, 0, f"Ritmo Code PC Monitor {VERSION}")          # MF_GRAYED
         u.AppendMenuW(menu, 0x1, 0, self._device_line())
         u.AppendMenuW(menu, 0x800, 0, None)                                       # separatore
+        ip = device_ip()
+        u.AppendMenuW(menu, 0x10 | (0 if ip else 0x1), self._timer_menu(ip), "Timer e pomodoro")   # MF_POPUP
+        u.AppendMenuW(menu, 0x800, 0, None)
         u.AppendMenuW(menu, 0, self.ID_OPEN, "Apri stato e collegamento")
         device = DEVICE_SEEN["ip"] or load_config().get("device")
         u.AppendMenuW(menu, 0 if device else 0x1, self.ID_DEVICE, "Apri il pannello del dispositivo")
@@ -1016,8 +1061,40 @@ class TrayIcon:
         u.DestroyMenu(menu)
         self._command(cmd, device)
 
+    def _timer_menu(self, ip):
+        u = self.user32
+        sub = u.CreatePopupMenu()
+        st = device_timer(ip) if ip else None
+        mode = (st or {}).get("mode", 0)
+        head = st.get("label") if st and mode else ("nessun timer in corso" if st else "dispositivo non raggiungibile")
+        u.AppendMenuW(sub, 0x1, 0, head)
+        u.AppendMenuW(sub, 0x800, 0, None)
+        for i in (20, 21, 22):
+            u.AppendMenuW(sub, 0, i, TIMER_ITEMS[i][2])
+        u.AppendMenuW(sub, 0x800, 0, None)
+        for i in (23, 24, 25, 26):
+            u.AppendMenuW(sub, 0, i, TIMER_ITEMS[i][2])
+        u.AppendMenuW(sub, 0x800, 0, None)
+        u.AppendMenuW(sub, 0 if mode in (2, 3) else 0x1, 27, TIMER_ITEMS[27][2])   # salta fase: solo pomodoro
+        u.AppendMenuW(sub, 0 if mode == 1 else 0x1, 28, TIMER_ITEMS[28][2])        # +5 min: solo timer
+        u.AppendMenuW(sub, 0 if mode else 0x1, 29, TIMER_ITEMS[29][2])
+        return sub
+
+    def _timer(self, cmd):
+        ip = device_ip()
+        action, params, text = TIMER_ITEMS[cmd]
+        result = timer_command(ip, action, params) if ip else {"ok": False, "error": "nessun dispositivo collegato"}
+        if result.get("ok"):
+            msg = "timer fermato" if action == "stop" else (result.get("label") or text)
+            self.balloon("Ritmo Code", f"{msg} sul dispositivo")
+        else:
+            self.balloon("Ritmo Code", f"{text}: {result.get('error', 'non riuscito')}")
+
     def _command(self, cmd, device=None):
         import webbrowser
+        if cmd in TIMER_ITEMS:
+            threading.Thread(target=self._timer, args=(cmd,), daemon=True).start()
+            return
         if cmd == self.ID_OPEN:
             webbrowser.open(f"http://127.0.0.1:{self.port}/")
         elif cmd == self.ID_DEVICE and device:

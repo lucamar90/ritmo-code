@@ -9,7 +9,7 @@ No computer running, no app, no cloud.
 
 [Italiano](README.md) · **English**
 
-<img src="https://img.shields.io/badge/firmware-v3.9.6-D97757?style=for-the-badge" alt="firmware v3.9.6">
+<img src="https://img.shields.io/badge/firmware-v3.9.7-D97757?style=for-the-badge" alt="firmware v3.9.7">
 <img src="https://img.shields.io/badge/ESP32--S3-AXS15231B%20480×320-1B1A18?style=for-the-badge" alt="ESP32-S3 AXS15231B">
 <img src="https://img.shields.io/badge/LVGL-9.2.2-9BC08A?style=for-the-badge" alt="LVGL 9.2.2">
 <img src="https://img.shields.io/badge/accounts-up%20to%204-8E8B82?style=for-the-badge" alt="up to 4 accounts">
@@ -80,7 +80,7 @@ Anthropic, and the token is never exposed.
 - **Weekly pace**: percentage used minus percentage of the week elapsed. Green when under pace, amber up to +15%, red beyond. Alternates with a **forecast**: "at reset you reach ~70%" or "at this pace ends thu 14:00".
 - **Weekly history**: the peak of every week, stored on the device per account.
 - Threshold **alerts** (25/50/70/100%) and a **reset** alert (can be turned off).
-- **Timer and pomodoro**: tap the clock or the tomato line on the home page. Three presets, **25/5**, **50/10** and **15/3** (focus/break in minutes, long break after the fourth), or a 5, 10, 15 or 30-minute timer. The countdown runs under the clock and in the header, Clawd announces the end of each phase full screen (at night too) and today's pomodoros are counted.
+- **Timer and pomodoro**: tap the clock or the tomato line on the home page. Three presets, **25/5**, **50/10** and **15/3** (focus/break in minutes, long break after the fourth), or a 5, 10, 15 or 30-minute timer. The countdown runs under the clock and in the header, Clawd announces the end of each phase full screen (at night too) and today's pomodoros are counted. It can be driven from the PC too (tray menu) and, with *Settings → alerts → claude during focus → at the break*, Claude alerts wait for the end of the focus.
 - **Claude Code alerts**: Clawd tells you when Claude has finished a task (with how long it took) or needs a permission, via hooks and the [PC Monitor](#ritmo-code-pc-monitor) app. While Claude works, the ✻ in the header spins like in Claude Code and the home box shows how many sessions are **working**.
 - **Models**: one probe per cycle, rotating. **Model IDs are editable** on the device or in the browser, so a renamed model needs no rebuild.
 - **Night mode** during a time band (22, 23 or 00 → 07): a **full-screen clock**, dim or very dim, or the screen off, and by default **updates paused**. The first tap only wakes the screen, without pressing anything. **Dimming** after 1, 5 or 10 minutes without touches.
@@ -171,7 +171,8 @@ The app sits next to the Windows clock with the Clawd icon:
 
 - **hover** shows CPU, GPU, RAM and whether the device is reading the data;
 - **double-click** opens the status and pairing page;
-- **right-click** opens the device panel or quits the app (**Esci**).
+- **right-click** opens the device panel or quits the app (**Esci**);
+- **right-click → Timer e pomodoro** starts a pomodoro (25/5, 50/10, 15/3) or a timer on the device, stops it or skips the phase; the running timer is shown at the top.
 
 **5. Claude Code alerts**
 
