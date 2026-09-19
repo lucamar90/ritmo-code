@@ -2866,12 +2866,9 @@ static void home_tick() {
   }
   label_set(g_ui.hmDate, s);
   label_color(g_ui.hmDate, g_tmMode ? tm_color() : C_MUTED);
-  // descrizione meteo: ogni 6 s alterna oggi e domani
+  // descrizione meteo di oggi (la colonna tiene 21 caratteri; domani e' nelle previsioni della settimana)
   if (g_wx.ok) {
-    if ((millis() / 6000) % 2 == 0)
-      snprintf(s, sizeof(s), "%s " U_MIDDOT " %.0f\xC2\xB0/%.0f\xC2\xB0", wx_desc(g_wx.code), g_wx.tmax, g_wx.tmin);
-    else
-      snprintf(s, sizeof(s), TRS("domani %.0f\xC2\xB0/%.0f\xC2\xB0 %s", "tomorrow %.0f\xC2\xB0/%.0f\xC2\xB0 %s"), g_wx.tmax2, g_wx.tmin2, wx_desc(g_wx.code2));
+    snprintf(s, sizeof(s), "%s %.0f/%.0f\xC2\xB0", wx_desc(g_wx.code), g_wx.tmax, g_wx.tmin);
     label_set(g_ui.hmDesc, s);
   }
   if (g_pcHost[0] && g_pcAtMs && millis() - g_pcAtMs > pc_stale_ms()) home_redraw();   // PC non risponde piu'
@@ -2891,8 +2888,8 @@ static void home_redraw() {
       if (first < 0 && g_wx.rain[i] >= 40) first = i;
     }
     if (first >= 0) snprintf(s, sizeof(s), TRS("pioggia %d%% alle %02d", "rain %d%% at %02d"), g_wx.rain[first], (g_wx.rainHour0 + first) % 24);
-    else if (best >= 20) snprintf(s, sizeof(s), TRS("pioggia possibile %d%%", "rain possible %d%%"), best);
-    else snprintf(s, sizeof(s), "%s", TRS("niente pioggia nelle 12h", "no rain in 12h"));
+    else if (best >= 20) snprintf(s, sizeof(s), TRS("forse pioggia %d%%", "rain possible %d%%"), best);
+    else snprintf(s, sizeof(s), "%s", TRS("niente pioggia 12h", "no rain in 12h"));
     (void)bestH;
     label_set(g_ui.hmRain, s);
     label_color(g_ui.hmRain, first >= 0 ? C_BLUE : C_MUTED);

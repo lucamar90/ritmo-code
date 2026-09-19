@@ -1069,8 +1069,7 @@ function homeTick() {
   if (TM.mode) {   // timer in corso: al posto della data, fase e ora di fine (il conto alla rovescia e' nella testata)
     setText(h.date, TRS(`${tmLabel()} · fine ${fmtHm(nowEpoch() + tmLeft())}`, `${tmLabel()} · ends ${fmtHm(nowEpoch() + tmLeft())}`), tmColor());
   } else setText(h.date, `${P.lang ? GE[p.wd] : GI[p.wd]} ${p.d} ${(P.lang ? ME : MI)[p.mo - 1]} · ${WX.city.toLowerCase()}`, C.MUTED);
-  setText(h.desc, Math.floor(realMs() / 6000) % 2 === 0 ? `${wxDesc(WX.code)} · ${WX.tmax}°/${WX.tmin}°`
-    : `${TRS('domani', 'tomorrow')} ${WX.tmax2}°/${WX.tmin2}° ${wxDesc(WX.code2)}`);
+  setText(h.desc, `${wxDesc(WX.code)} ${WX.tmax}/${WX.tmin}°`);   // oggi; domani e' nelle previsioni della settimana
 }
 function homeRedraw() {
   const h = UI.hm; if (!h) return;
@@ -1078,7 +1077,7 @@ function homeRedraw() {
   setText(h.temp, `${WX.temp}°`);
   const first = WX.rain.findIndex((v) => v >= 40), best = Math.max(...WX.rain);
   setText(h.rain, first >= 0 ? TRS(`pioggia ${WX.rain[first]}% alle ${pad2((WX.rainH0 + first) % 24)}`, `rain ${WX.rain[first]}% at ${pad2((WX.rainH0 + first) % 24)}`)
-    : best >= 20 ? TRS(`pioggia possibile ${best}%`, `rain possible ${best}%`) : TRS('niente pioggia nelle 12h', 'no rain in 12h'), first >= 0 ? C.BLUE : C.MUTED);
+    : best >= 20 ? TRS(`forse pioggia ${best}%`, `rain possible ${best}%`) : TRS('niente pioggia 12h', 'no rain in 12h'), first >= 0 ? C.BLUE : C.MUTED);
   setText(h.sun, TRS(`sole ${WX.sunrise}-${WX.sunset}`, `sun ${WX.sunrise}-${WX.sunset}`));
   [[G.usage.h5, G.usage.h5Reset], [G.usage.d7, G.usage.d7Reset]].forEach(([v, re], i) => {
     const r = h.row[i], col = gradColor(v || 0);
