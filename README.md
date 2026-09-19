@@ -86,7 +86,7 @@ nessuna richiesta in più ad Anthropic, e il token non viene mai esposto.
 - **Statistiche del PC** tramite l'app [Ritmo Code PC Monitor](#ritmo-code-pc-monitor), lette ogni 1, 3, 5 secondi o 1 minuto.
 - **Fino a 4 account**, cifrati con lo stesso PIN: viene interrogato solo quello attivo.
 - **Reti Wi-Fi salvate**: fino a 3, con rete preferita e "dimentica"; il segnale in dBm è nelle impostazioni.
-- **Aggiornamento firmware via Wi-Fi**, protetto da un codice mostrato sullo schermo, con **ritorno automatico** alla versione precedente se il nuovo firmware non parte.
+- **Aggiornamento firmware con un tocco**: il dispositivo controlla da solo l'ultima release su GitHub (dopo l'avvio e una volta al giorno), la testata mostra *nuova v…* e in *Impostazioni → sistema → aggiornamenti* si installa con un tocco. Resta anche l'aggiornamento dal browser, protetto da un codice mostrato sullo schermo; in entrambi i casi c'è il **ritorno automatico** alla versione precedente se il nuovo firmware non parte.
 - **Layout in sezione aurea**: margini, colonne, altezze dei riquadri e spazi seguono φ e la scala di Fibonacci (5 · 8 · 13 · 21 · 34 · 55 · 89), con padding simmetrici in ogni pagina.
 - **Intervallo** di aggiornamento da 30 s a 30 min, **slideshow** automatico, **luminosità**, **fuso orario** (Roma con ora legale automatica, o GMT±N).
 

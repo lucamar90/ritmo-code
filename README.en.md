@@ -89,7 +89,7 @@ Anthropic, and the token is never exposed.
 - **PC statistics** through the [Ritmo Code PC Monitor](#ritmo-code-pc-monitor) app, read every 1, 3, 5 seconds or 1 minute.
 - **Up to 4 accounts**, encrypted under the same PIN; only the active one is polled.
 - **Saved Wi-Fi networks**: up to 3, with a preferred network and "forget"; signal strength in dBm under Settings.
-- **Firmware update over Wi-Fi**, protected by a code shown on the screen, with **automatic rollback** to the previous version if the new firmware fails to start.
+- **One-tap firmware update**: the device checks the latest GitHub release by itself (after boot and once a day), the header shows *new v…* and *Settings → system → updates* installs it with one tap. Updating from the browser, protected by a code shown on the screen, is still there; either way there is **automatic rollback** to the previous version if the new firmware fails to start.
 - **Golden-ratio layout**: margins, columns, box heights and gaps follow φ and the Fibonacci scale (5 · 8 · 13 · 21 · 34 · 55 · 89), with symmetric padding on every page.
 - Refresh **interval** from 30 s to 30 min, auto **slideshow**, **brightness**, **timezone** (Rome with automatic DST, or GMT±N).
 

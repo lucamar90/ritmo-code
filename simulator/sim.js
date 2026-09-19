@@ -1649,7 +1649,8 @@ function uiSettings() {
   } else {
     kvRow(lst, TRS('lingua', 'language'), TRS('italiano', 'english'), () => { P.lang ^= 1; requestState(ST.SETTINGS); });
     kvRow(lst, TRS('fuso orario', 'timezone'), tzVal(), (v) => { const i = TZ_OPTS.indexOf(P.tz); P.tz = TZ_OPTS[(i + 1) % TZ_OPTS.length]; setText(v, tzVal()); });
-    kvRow(lst, TRS('aggiorna firmware', 'update firmware'), 'wifi', () => slog('[SIM] aggiornamento firmware: sul dispositivo'));
+    kvRow(lst, TRS('aggiornamenti', 'updates'), TRS('aggiornato', 'up to date'), () => slog('[SIM] sul dispositivo: controlla su GitHub e installa con un tocco'));
+    kvRow(lst, TRS('aggiorna da browser', 'update from browser'), 'wifi', () => slog('[SIM] aggiornamento dal browser: sul dispositivo'));
     kvRow(lst, 'info', `v${CFG.FW}`, () => requestState(ST.ABOUT));
     kvRow(lst, TRS('contatore fps', 'fps counter'), P.perf ? TRS('acceso', 'on') : TRS('spento', 'off'), (v) => { P.perf = !P.perf; setText(v, P.perf ? TRS('acceso', 'on') : TRS('spento', 'off')); });
     kvRow(lst, TRS('cancella tutto', 'erase everything'), '', (v) => {

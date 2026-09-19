@@ -66,3 +66,7 @@ bool fetchWeather(float lat, float lon, WeatherData& out);
 bool fetchPcStats(const char* host, PcStats& out);
 // avviso al PC (Ritmo Code PC Monitor suona e mostra una notifica di Windows)
 bool postPcNotify(const char* host, const char* ev, const char* title, const char* msg);
+
+// aggiornamento del firmware dalle release di GitHub (GITHUB_REPO in config.h)
+bool fetchLatestRelease(char* tag, size_t tagSz, char* url, size_t urlSz);
+bool installFromUrl(const char* url, void (*progress)(int pct), String& err);

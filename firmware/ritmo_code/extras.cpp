@@ -2,7 +2,9 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include <Update.h>
 #include "certs.h"
+#include "config.h"
 
 // ---- mini parser JSON: basta per le risposte piccole e note di Open-Meteo e Ritmo Code PC Monitor ----
 // cerca "key" a partire da `from` e restituisce la posizione subito dopo i due punti (-1 se manca)
@@ -260,4 +262,74 @@ bool postPcNotify(const char* host, const char* ev, const char* title, const cha
   http.end();
   Serial.printf("[PC] avviso %s -> %d\n", ev, code);
   return code >= 200 && code < 300;
+}
+
+// ---- Aggiornamento del firmware dalle release di GitHub ----
+// Ultima release: tag ("v3.9.3") e indirizzo del file ritmo-code-*.bin
+bool fetchLatestRelease(char* tag, size_t tagSz, char* url, size_t urlSz) {
+  tag[0] = 0; url[0] = 0;
+  WiFiClientSecure client;
+  client.setCACert(CA_BUNDLE);           // api.github.com: USERTrust ECC
+  HTTPClient http;
+  if (!http.begin(client, "https://api.github.com/repos/" GITHUB_REPO "/releases/latest")) return false;
+  http.setTimeout(10000);
+  http.setUserAgent("ritmo-code");        // GitHub rifiuta le richieste senza User-Agent
+  http.addHeader("Accept", "application/vnd.github+json");
+  int code = http.GET();
+  if (code != 200) { http.end(); Serial.printf("[OTA] release: HTTP %d\n", code); return false; }
+  String s = http.getString();
+  http.end();
+  jstrv(s, "tag_name", tag, tagSz);
+  // primo asset .bin del firmware (lo zip del PC Monitor ha un altro nome)
+  for (int p = s.indexOf("\"browser_download_url\""); p >= 0; p = s.indexOf("\"browser_download_url\"", p + 1)) {
+    char u[200]; jstrv(s, "browser_download_url", u, sizeof(u), p);
+    const char* name = strrchr(u, '/');
+    size_t n = strlen(u);
+    if (name && strncmp(name + 1, "ritmo-code-", 11) == 0 && n > 4 && strcmp(u + n - 4, ".bin") == 0) {
+      strlcpy(url, u, urlSz);
+      break;
+    }
+  }
+  Serial.printf("[OTA] ultima release %s, file %s\n", tag, url[0] ? url : "(nessun .bin)");
+  return tag[0] && url[0];
+}
+
+// Scarica il .bin (GitHub reindirizza su release-assets.githubusercontent.com) e lo scrive
+// nella partizione di aggiornamento; progress(0..100) a ogni blocco. true = pronto al riavvio.
+bool installFromUrl(const char* url, void (*progress)(int pct), String& err) {
+  WiFiClientSecure client;
+  client.setCACert(CA_BUNDLE);
+  HTTPClient http;
+  if (!http.begin(client, url)) { err = "indirizzo non valido"; return false; }
+  http.setFollowRedirects(HTTPC_FORCE_FOLLOW_REDIRECTS);
+  http.setUserAgent("ritmo-code");
+  http.setTimeout(15000);
+  int code = http.GET();
+  if (code != 200) { err = String("download: HTTP ") + code; http.end(); return false; }
+  int len = http.getSize();
+  if (len <= 0) { err = "dimensione sconosciuta"; http.end(); return false; }
+  if (!Update.begin(len, U_FLASH)) { err = String("spazio: ") + Update.errorString(); http.end(); return false; }
+  WiFiClient* st = http.getStreamPtr();
+  static uint8_t buf[4096];
+  int done = 0, lastPct = -1;
+  uint32_t idle = millis();
+  while (done < len) {
+    size_t av = st->available();
+    if (!av) {
+      if (!http.connected() || millis() - idle > 15000) break;
+      delay(2);
+      continue;
+    }
+    int r = st->readBytes(buf, av > sizeof(buf) ? sizeof(buf) : av);
+    if (r <= 0) continue;
+    if (Update.write(buf, r) != (size_t)r) { err = String("scrittura: ") + Update.errorString(); Update.abort(); http.end(); return false; }
+    done += r; idle = millis();
+    int pct = (int)((int64_t)done * 100 / len);
+    if (pct != lastPct) { lastPct = pct; if (progress) progress(pct); }
+  }
+  http.end();
+  if (done < len) { err = "download interrotto"; Update.abort(); return false; }
+  if (!Update.end(true)) { err = String("verifica: ") + Update.errorString(); return false; }
+  Serial.printf("[OTA] installato %d byte da %s\n", done, url);
+  return true;
 }

@@ -426,7 +426,26 @@ static void show_moment(int win, int thr);
 static void moment_tick();
 static void moment_close();
 static void cc_event(long id, const char *ev, const char *proj, int dur, int age);
-static int g_setGroup = 0;                   // gruppo di impostazioni aperto (0 = pagina principale)
+static int g_setGroup = 0;
+// Aggiornamento del firmware dall'ultima release di GitHub: controllo (task extra) e installazione
+// (task di rete: scrivere la flash da uno stack in PSRAM non si puo')
+enum { UPD_IDLE = 0, UPD_CHECKING, UPD_AVAILABLE, UPD_UPTODATE, UPD_ERROR, UPD_INSTALLING, UPD_FAILED, UPD_REBOOT };
+static volatile int g_updState = UPD_IDLE;
+static volatile bool g_updCheckReq = false, g_updInstallReq = false, g_updRunning = false, g_updDone = false;
+static volatile int g_updPct = 0;
+static char g_updTag[16] = "", g_updUrl[200] = "";
+static String g_updErr;
+static uint32_t g_updCheckedMs = 0;
+static void upd_progress(int pct) { g_updPct = pct; }
+// "v3.9.3" piu' recente di FW_VERSION? (confronto numero per numero)
+static bool ver_newer(const char *tag) {
+  int a[3] = {0, 0, 0}, b[3] = {0, 0, 0};
+  const char *t = tag; while (*t && !isdigit((unsigned char)*t)) t++;
+  sscanf(t, "%d.%d.%d", &a[0], &a[1], &a[2]);
+  sscanf(FW_VERSION, "%d.%d.%d", &b[0], &b[1], &b[2]);
+  for (int i = 0; i < 3; i++) if (a[i] != b[i]) return a[i] > b[i];
+  return false;
+}                   // gruppo di impostazioni aperto (0 = pagina principale)
 static char g_ccEv[8], g_ccProj[28];
 static int  g_ccBusyN = 0;                      // sessioni di Claude Code al lavoro (PC Monitor)
 static void cc_busy_ui();            // ultimo evento di Claude Code da mostrare
@@ -3950,6 +3969,7 @@ static void set_hdr_status() {
   char buf[40]; uint32_t color;
   if (g_refreshing)        { strcpy(buf, TRS("aggiornamento...", "updating...")); color = C_ACCENT; }
   else if (g_tmMode)       { tm_label(buf, sizeof(buf)); color = tm_color(); }
+  else if (g_updState == UPD_AVAILABLE) { snprintf(buf, sizeof(buf), TRS("nuova %s", "new %s"), g_updTag); color = C_ACCENT; }
   else if (g_userPause && g_pauseUntil) {
     char c[12]; fmt_hm(g_pauseUntil, c, sizeof(c));
     snprintf(buf, sizeof(buf), TRS("pausa fino %s", "paused until %s"), c); color = C_WARN;
@@ -4169,6 +4189,63 @@ static int g_netDelArmed = -1;             // rete wifi da dimenticare (secondo 
 static lv_obj_t *g_setList = nullptr;
 static int32_t g_setScroll = 0;
 
+// schermata di installazione: versione, percentuale e barra; se fallisce si chiude con un tocco
+struct UpdUI { lv_obj_t *scrim, *pct, *msg; Blocks blk; int lastPct, shown; };
+static UpdUI g_upd = {};
+static void upd_close() { if (g_upd.scrim) { lv_obj_delete(g_upd.scrim); memset(&g_upd, 0, sizeof(g_upd)); } }
+static void upd_close_cb(lv_event_t *e) { (void)e; if (g_updState == UPD_FAILED) upd_close(); }
+static void upd_overlay() {
+  upd_close();
+  lv_obj_t *s = plain_obj(lv_layer_top());
+  g_upd.scrim = s;
+  lv_obj_set_size(s, 480, 320);
+  lv_obj_set_style_bg_color(s, lv_color_hex(C_BG), 0);
+  lv_obj_set_style_bg_opa(s, LV_OPA_COVER, 0);
+  lv_obj_add_flag(s, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(s, upd_close_cb, LV_EVENT_CLICKED, NULL);
+  tbox(s, 10, 14, 460, 296, TRS("aggiornamento firmware", "firmware update"), C_ACCENT);
+  char b[48];
+  snprintf(b, sizeof(b), "v" FW_VERSION " " U_RIGHT " %s", g_updTag);
+  tstatic(s, b, F22, C_TEXT, 34, 50);
+  lv_obj_t *r = trow(s, 32, 96);
+  g_upd.pct = mklabel(r, "0", F54, C_ACCENT);
+  mklabel(r, "%", F22, C_MUTED);
+  g_upd.blk = blocks_create(s, 34, 172, NBLK, F14);
+  g_upd.msg = tstatic(s, TRS("download da GitHub... non scollegare il dispositivo", "downloading from GitHub... do not unplug"), F14, C_MUTED, 34, 214);
+  lv_obj_set_width(g_upd.msg, 412);
+  lv_label_set_long_mode(g_upd.msg, LV_LABEL_LONG_WRAP);
+  g_upd.lastPct = -1;
+  g_upd.shown = -1;
+}
+static void upd_install_start() {
+  g_updPct = 0; g_updErr = "";
+  g_updState = UPD_INSTALLING;
+  g_updInstallReq = true;                           // il loop sveglia il task di rete appena e' libero
+  upd_overlay();
+}
+static void upd_tick() {
+  if (!g_upd.scrim) return;
+  int p = g_updPct;
+  if (p != g_upd.lastPct && g_updState == UPD_INSTALLING) {
+    g_upd.lastPct = p;
+    char b[8]; snprintf(b, sizeof(b), "%d", p);
+    label_set(g_upd.pct, b);
+    blocks_set(g_upd.blk, p, C_ACCENT);
+  }
+  if (g_upd.shown == g_updState) return;
+  g_upd.shown = g_updState;
+  if (g_updState == UPD_REBOOT) {
+    label_set(g_upd.pct, "100"); blocks_set(g_upd.blk, 100, C_OK);
+    label_set(g_upd.msg, TRS("installato: riavvio...", "installed: restarting..."));
+    label_color(g_upd.msg, C_OK);
+  } else if (g_updState == UPD_FAILED) {
+    char m[120];
+    snprintf(m, sizeof(m), TRS("non riuscito: %s. Il firmware attuale resta. Tocca per chiudere.",
+                               "failed: %s. The current firmware stays. Tap to close."), g_updErr.c_str());
+    label_set(g_upd.msg, m);
+    label_color(g_upd.msg, C_BAD);
+  }
+}
 static void settings_action_cb(lv_event_t *e) {
   int act = (int)(intptr_t)lv_event_get_user_data(e);
   switch (act) {
@@ -4283,6 +4360,13 @@ static void settings_action_cb(lv_event_t *e) {
       g_prefs.putInt("ccclose", g_ccCloseIdx);
       request_state(ST_SETTINGS);
       break;
+    case 26:                                           // aggiornamenti: cerca / installa
+      if (g_updState == UPD_AVAILABLE) upd_install_start();
+      else if (g_updState != UPD_CHECKING && g_updState != UPD_INSTALLING) {
+        g_updState = UPD_CHECKING; g_updCheckedMs = millis(); g_updCheckReq = true;
+        request_state(ST_SETTINGS);
+      }
+      break;
     case 24:                                           // suoni e notifiche sul pc
       g_pcSound = !g_pcSound;
       g_prefs.putBool("pcsnd", g_pcSound);
@@ -4350,7 +4434,8 @@ static void ui_settings() {
       snprintf(sc, sizeof(sc), TRS("luce %s", "light %s"), bri_label());
       sub(SG_SCREEN, sc);
       sub(SG_NET, ssidBuf);
-      sub(SG_SYSTEM, "v" FW_VERSION);
+      if (g_updState == UPD_AVAILABLE) { char nv[32]; snprintf(nv, sizeof(nv), TRS("nuova %s", "new %s"), g_updTag); sub(SG_SYSTEM, nv); }
+      else sub(SG_SYSTEM, "v" FW_VERSION);
       break;
     }
     case SG_CLAUDE: {
@@ -4416,7 +4501,20 @@ static void ui_settings() {
       kv_row(lst, TRS("lingua", "language"), TRS("italiano", "english"), C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)9);
       char tz[32]; tz_label(tz, sizeof(tz));
       kv_row(lst, TRS("fuso orario", "timezone"), tz, C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)7, &g_tzLbl);
-      kv_row(lst, TRS("aggiorna firmware", "update firmware"), "wifi", C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)14);
+      {
+        char uv[40];
+        switch (g_updState) {
+          case UPD_CHECKING:  strcpy(uv, TRS("controllo...", "checking...")); break;
+          case UPD_AVAILABLE: snprintf(uv, sizeof(uv), TRS("installa %s " U_ENTER, "install %s " U_ENTER), g_updTag); break;
+          case UPD_UPTODATE:  strcpy(uv, TRS("aggiornato", "up to date")); break;
+          case UPD_ERROR:     strcpy(uv, TRS("errore, riprova", "error, retry")); break;
+          case UPD_FAILED:    strcpy(uv, TRS("non riuscito, riprova", "failed, retry")); break;
+          default:            strcpy(uv, TRS("cerca", "check")); break;
+        }
+        kv_row(lst, TRS("aggiornamenti", "updates"), uv, C_TEXT, g_updState == UPD_AVAILABLE ? C_OK : C_ACCENT,
+               settings_action_cb, (void *)(intptr_t)26);
+      }
+      kv_row(lst, TRS("aggiorna da browser", "update from browser"), "wifi", C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)14);
       kv_row(lst, "info", "v" FW_VERSION, C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)10);
       kv_row(lst, TRS("contatore fps", "fps counter"), g_perfOn ? TRS("acceso", "on") : TRS("spento", "off"),
              C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)13);
@@ -4830,6 +4928,7 @@ static void render_state() {
   pause_menu_close();
   tm_menu_close();
   wx_week_close();
+  upd_close();                                   // se l'installazione e' in corso il loop la rimette
   night_clock_close();
   lv_obj_clean(lv_layer_top());
   // invalida i puntatori vivi prima di distruggere la vecchia schermata
@@ -4892,6 +4991,20 @@ static void ensure_time() {
 static void net_task(void *) {
   for (;;) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    if (g_updRunning) {                             // aggiornamento del firmware al posto del giro normale
+      xSemaphoreTake(g_httpsLock, portMAX_DELAY);
+      String err;
+      bool ok = g_wifi.isConnected() && installFromUrl(g_updUrl, upd_progress, err);
+      if (!ok && !err.length()) err = "wifi non connesso";
+      xSemaphoreGive(g_httpsLock);
+      if (ok) { g_updState = UPD_REBOOT; delay(1500); ESP.restart(); }
+      Serial.printf("[OTA] non riuscito: %s\n", err.c_str());
+      g_updErr = err;
+      g_updState = UPD_FAILED;
+      g_updRunning = false; g_updInstallReq = false; g_netBusy = false;
+      g_updDone = true;
+      continue;
+    }
     xSemaphoreTake(g_httpsLock, portMAX_DELAY);
     uint32_t t0 = millis();
     if (!g_wifi.isConnected()) g_wifi.autoConnect(WIFI_CONNECT_TIMEOUT_MS);
@@ -4928,6 +5041,24 @@ static void extra_task(void *) {
       g_wxRes = w;
       g_wxReq = false;
       g_wxDone = true;
+    }
+    if (g_updCheckReq) {
+      char tag[16], url[200];
+      bool ok = false;
+      if (g_wifi.isConnected()) {
+        xSemaphoreTake(g_httpsLock, portMAX_DELAY);
+        ok = fetchLatestRelease(tag, sizeof(tag), url, sizeof(url));
+        xSemaphoreGive(g_httpsLock);
+      }
+      if (ok) {
+        strlcpy(g_updTag, tag, sizeof(g_updTag));
+        strlcpy(g_updUrl, url, sizeof(g_updUrl));
+        g_updState = ver_newer(tag) ? UPD_AVAILABLE : UPD_UPTODATE;
+      } else {
+        g_updState = UPD_ERROR;
+      }
+      g_updCheckReq = false;
+      g_updDone = true;
     }
     if (g_pcNtfReq) {
       PcNotify n = g_pcNtf;
@@ -5197,6 +5328,26 @@ void loop() {
   // Rete in background: avvio del primo caricamento, risultati pronti, poll/refresh
   if (g_loadPending && g_state == ST_LOADING && net_start(true)) g_loadPending = false;
   if (g_netDone) net_apply();
+  // aggiornamento: il task di rete installa appena ha finito il giro in corso
+  if (g_updInstallReq && !g_updRunning && !g_netBusy && !g_netDone) {
+    g_updRunning = true; g_netBusy = true;
+    xTaskNotifyGive(g_netTask);
+  }
+  if ((g_updState == UPD_INSTALLING || g_updState == UPD_REBOOT) && !g_upd.scrim) upd_overlay();   // dopo un cambio di schermata
+  upd_tick();
+  if (g_updDone) {
+    g_updDone = false;
+    set_hdr_status();
+    if (g_state == ST_SETTINGS) request_state(ST_SETTINGS);
+  }
+  // controllo automatico della nuova versione: 90 s dopo l'avvio, poi una volta al giorno
+  if (g_state == ST_MAIN && g_wifi.isConnected() && !g_updCheckReq && g_updState != UPD_INSTALLING &&
+      g_updState != UPD_REBOOT && millis() > 90000UL &&
+      (!g_updCheckedMs || millis() - g_updCheckedMs > 24UL * 3600UL * 1000UL)) {
+    g_updCheckedMs = millis();
+    if (g_updState != UPD_AVAILABLE) g_updState = UPD_CHECKING;
+    g_updCheckReq = true;
+  }
   screen_tick();
   night_clock_sync();
   tm_tick();
