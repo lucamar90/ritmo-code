@@ -1121,7 +1121,7 @@ function homeRedraw() {
   const [w, wc] = statusWord(G.usage.statusOverall);
   setText(h.row[0].right, `${TRS('stato', 'status')} ${w}`, wc);
   const ok = [0, 1, 2, 3].filter((i) => modelMood(i) === 1).length;
-  if (P.pause) setText(h.row[1].right, TRS('richieste in pausa', 'requests paused'), C.WARN);
+  if (P.pause) setText(h.row[1].right, TRS(`richieste <span style="color:${C.WARN}">in pausa</span>`, `requests <span style="color:${C.WARN}">paused</span>`), C.MUTED);
   else setText(h.row[1].right, TRS(`modelli ${ok}/4 ok`, `models ${ok}/4 ok`), ok === 4 ? C.MUTED : C.WARN);
   h.pcBox._lg.textContent = `pc · ${PC.host}`;
   const k = (s) => `<span style="color:${C.MUTED};font-size:12px">${s}</span>`;

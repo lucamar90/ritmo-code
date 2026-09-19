@@ -384,6 +384,7 @@ struct DashUI {
   lv_obj_t *hmPct[2], *hmInfo[2], *hmRight[2];
   Blocks hmBlk[2];
   lv_obj_t *hmPcRow, *hmPcOff, *hmPcVal[4], *hmPcLegend;
+  lv_obj_t *hmPauseRow;                           // "richieste" + "in pausa" (in giallo): due colori, due etichette
   // pc
   lv_obj_t *pcLeg[4], *pcMain[4], *pcSub[3], *pcSpark[3], *pcSys, *pcDisks;
   int hmWxCode;
@@ -3092,6 +3093,11 @@ static void build_tile_home(lv_obj_t *t) {
     lv_obj_set_width(g_ui.hmRight[i], 138);
     lv_obj_set_style_text_align(g_ui.hmRight[i], LV_TEXT_ALIGN_RIGHT, 0);
   }
+  g_ui.hmPauseRow = trow(b, 0, 0);                  // allineata a destra come hmRight (bordo a x 441)
+  mklabel(g_ui.hmPauseRow, TRS("richieste ", "requests "), F12, C_MUTED);
+  mklabel(g_ui.hmPauseRow, TRS("in pausa", "paused"), F12, C_WARN);
+  lv_obj_align(g_ui.hmPauseRow, LV_ALIGN_TOP_RIGHT, -(454 - 2 - 441), 13 + 30 + 2);
+  lv_obj_add_flag(g_ui.hmPauseRow, LV_OBJ_FLAG_HIDDEN);
 
   lv_obj_t *p = tbox(t, 13, 206, 454, 40, "pc", C_BORDER, &g_ui.hmPcLegend);
   lv_obj_add_flag(p, LV_OBJ_FLAG_CLICKABLE);                       // -> pagina pc
@@ -3200,7 +3206,11 @@ static void home_redraw() {
   label_set(g_ui.hmRight[0], s); label_color(g_ui.hmRight[0], wc);
   int ok = 0;
   for (int i = 0; i < NMODELS; i++) if (model_mood(i) == 1) ok++;
-  if (g_userPause) { label_set(g_ui.hmRight[1], TRS("richieste in pausa", "requests paused")); label_color(g_ui.hmRight[1], C_WARN); }
+  if (g_ui.hmPauseRow) {
+    if (g_userPause) lv_obj_clear_flag(g_ui.hmPauseRow, LV_OBJ_FLAG_HIDDEN);
+    else             lv_obj_add_flag(g_ui.hmPauseRow, LV_OBJ_FLAG_HIDDEN);
+  }
+  if (g_userPause) label_set(g_ui.hmRight[1], "");                  // al suo posto: "richieste in pausa" su due colori
   else {
     snprintf(s, sizeof(s), TRS("modelli %d/%d ok", "models %d/%d ok"), ok, NMODELS);
     label_set(g_ui.hmRight[1], s); label_color(g_ui.hmRight[1], ok == NMODELS ? C_MUTED : C_WARN);
