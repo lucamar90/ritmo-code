@@ -9,7 +9,7 @@ No computer running, no app, no cloud.
 
 [Italiano](README.md) · **English**
 
-<img src="https://img.shields.io/badge/firmware-v3.9.4-D97757?style=for-the-badge" alt="firmware v3.9.4">
+<img src="https://img.shields.io/badge/firmware-v3.9.5-D97757?style=for-the-badge" alt="firmware v3.9.5">
 <img src="https://img.shields.io/badge/ESP32--S3-AXS15231B%20480×320-1B1A18?style=for-the-badge" alt="ESP32-S3 AXS15231B">
 <img src="https://img.shields.io/badge/LVGL-9.2.2-9BC08A?style=for-the-badge" alt="LVGL 9.2.2">
 <img src="https://img.shields.io/badge/accounts-up%20to%204-8E8B82?style=for-the-badge" alt="up to 4 accounts">

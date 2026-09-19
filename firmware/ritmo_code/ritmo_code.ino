@@ -35,6 +35,7 @@
 #include "status_page.h"   // pagina di stato servita su /
 #include "logo_assets.h"   // Clawd + logotipo ufficiali (generato da tools/gen_logo_assets.py)
 struct NoticeText;                 // avviso a schermo intero (prototipi generati da Arduino)
+struct AlertRec;                   // voce della cronologia degli avvisi (idem)
 
 // ---- Tema "Terminale": font JetBrains Mono (tools/gen_fonts.sh) ----
 // 12/14 Regular, 22 Medium, 54 ExtraBold (solo cifre e %). I simboli che JetBrains
@@ -427,8 +428,9 @@ static void moment_tick();
 static void moment_close();
 static void cc_event(long id, const char *ev, const char *proj, int dur, int age);
 static int g_setGroup = 0;
-static int g_lastMoWin = 0, g_lastMoThr = 0, g_lastMoPeak = 0;   // ultimo avviso di soglia/reset
-static uint32_t g_lastMoAt = 0;
+// pannello a tendina: il touch riconosce il gesto (giu' dalla testata / su per chiudere), il loop apre
+static volatile int g_shadeReq = 0;               // 1 apri, 2 chiudi
+static lv_obj_t *g_shade = nullptr;
 // Aggiornamento del firmware dall'ultima release di GitHub: controllo (task extra) e installazione
 // (task di rete: scrivere la flash da uno stack in PSRAM non si puo')
 enum { UPD_IDLE = 0, UPD_CHECKING, UPD_AVAILABLE, UPD_UPTODATE, UPD_ERROR, UPD_INSTALLING, UPD_FAILED, UPD_REBOOT };
@@ -554,6 +556,9 @@ static void disp_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px
   lv_disp_flush_ready(disp);
 }
 static void screen_apply();
+static bool g_touchDown = false, g_gestDone = false;
+static int16_t g_gestX = 0, g_gestY = 0;
+static void touch_gesture_reset() { g_touchDown = false; }
 static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
   uint16_t x, y;
   if (touch_dev.touched()) {
@@ -565,11 +570,21 @@ static void touch_read_cb(lv_indev_t *indev, lv_indev_data_t *data) {
       screen_apply();
     }
     if (g_touchSwallow) { data->state = LV_INDEV_STATE_RELEASED; return; }
+    // pannello a tendina: giu' partendo dalla testata apre, su chiude (piu' verticale che orizzontale)
+    if (!g_touchDown) { g_touchDown = true; g_gestDone = false; g_gestX = x; g_gestY = y; }
+    int16_t sx = g_gestX, sy = g_gestY; bool &done = g_gestDone;
+    int dy = (int)y - sy, dx = abs((int)x - sx);
+    if (!done && g_state == ST_MAIN) {
+      if (!g_shade && sy < 40 && dy > 35 && dy > 2 * dx) { g_shadeReq = 1; done = true; }
+      else if (g_shade && dy < -35 && -dy > 2 * dx)    { g_shadeReq = 2; done = true; }
+      if (done) { g_touchSwallow = true; data->state = LV_INDEV_STATE_RELEASED; return; }
+    }
     data->point.x = x; data->point.y = y;
     data->state = LV_INDEV_STATE_PRESSED;
   } else {
     g_touchSwallow = false;
     data->state = LV_INDEV_STATE_RELEASED;
+    touch_gesture_reset();
   }
 }
 
@@ -3618,14 +3633,24 @@ static void notice_close() {
 }
 static void notice_close_cb(lv_event_t *e) { (void)e; notice_close(); }
 
-static NoticeText g_lastNt;                    // ultimo avviso a schermo intero (Claude, timer, pomodoro)
-static uint32_t g_lastNtAt = 0;                // millis in cui e' comparso (0 = nessuno)
+// ultimi avvisi (a schermo intero e di soglia): pannello a tendina e doppio tocco su "ritmo-code"
+struct AlertRec { uint32_t at; bool moment; int8_t win, thr; uint8_t peak; NoticeText nt; };
+#define AL_MAX 5
+static AlertRec g_al[AL_MAX];                  // [0] = il piu' recente
+static int g_alN = 0;
+static void al_push(const AlertRec &r) {
+  memmove(&g_al[1], &g_al[0], sizeof(AlertRec) * (AL_MAX - 1));
+  g_al[0] = r;
+  if (g_alN < AL_MAX) g_alN++;
+}
 static bool g_ntReplay = false;                // riaperto dall'utente: niente suono sul PC
 static void notice_show(const NoticeText &n) {
   notice_close();
   g_nt.kind = n.kind; g_nt.col = n.col; g_nt.hop = n.hop; g_nt.maxMs = n.maxMs;
-  if (!g_ntT0 && !g_ntReplay) {               // avviso nuovo: e' l'ultimo, da riaprire col doppio tocco
-    g_lastNt = n; g_lastNtAt = millis();
+  if (!g_ntT0 && !g_ntReplay) {               // avviso nuovo: in cronologia
+    AlertRec r = {};
+    r.at = (uint32_t)time(nullptr); r.moment = false; r.nt = n;
+    al_push(r);
   }
   if (!g_ntT0 && !g_ntReplay) {               // avviso nuovo (non rimesso dopo un rebuild): suono sul PC
     char title[64];
@@ -4063,6 +4088,111 @@ static void pause_long_cb(lv_event_t *e) {
   tbtn(b, 20, 136, 258, 38, TRS("annulla", "cancel"), F14, C_MUTED, C_BORDER, pause_menu_cb, (void *)(intptr_t)-1);
 }
 // doppio tocco su "✻ ritmo-code" = demo dei momenti
+// riapre l'avviso i della cronologia (senza suono sul PC)
+static void al_show(int i) {
+  if (i < 0 || i >= g_alN) return;
+  if (g_al[i].moment) { g_pendPeak = g_al[i].peak; show_moment(g_al[i].win, g_al[i].thr); return; }
+  g_ntReplay = true;
+  notice_show(g_al[i].nt);
+  g_ntReplay = false;
+}
+// una riga della cronologia: "19:42  claude ha finito · 12 min · claude code · ritmo-code"
+static void al_line(int i, char *out, size_t sz, uint32_t *col) {
+  const AlertRec &r = g_al[i];
+  char hm[12] = "--:--";
+  if (r.at > 1000000000UL) fmt_hm(r.at, hm, sizeof(hm));
+  if (r.moment) {
+    const char *wn = r.win ? TRS("7 giorni", "7-day") : TRS("5 ore", "5-hour");
+    if (r.thr) snprintf(out, sz, TRS("%s  finestra %s al %d%%", "%s  %s window at %d%%"), hm, wn, r.thr);
+    else       snprintf(out, sz, TRS("%s  finestra %s di nuovo libera", "%s  %s window available again"), hm, wn);
+    *col = r.thr >= 100 ? C_BAD : r.thr >= 70 ? C_WARN : r.thr >= 50 ? C_ACCENT : C_OK;
+    return;
+  }
+  int n = snprintf(out, sz, "%s  %s", hm, r.nt.top);
+  if (r.nt.big >= 0) n += snprintf(out + n, sz - n, " " U_MIDDOT " %d%s", r.nt.big, r.nt.unit);
+  const char *lg = r.nt.legend;                  // per Claude basta il progetto: "claude code · progetto"
+  if (r.nt.kind == NT_CLAUDE) { const char *m = strstr(lg, U_MIDDOT); lg = m ? m + strlen(U_MIDDOT) + 1 : ""; }
+  if (lg[0]) snprintf(out + n, sz - n, " " U_MIDDOT " %s", lg);
+  *col = r.nt.col;
+}
+
+// ---- Pannello a tendina: comandi rapidi e ultimi avvisi ----
+static lv_obj_t *g_shadePanel = nullptr;
+static void shade_close() { if (g_shade) { lv_obj_delete(g_shade); g_shade = nullptr; g_shadePanel = nullptr; } }
+static void shade_open(bool anim);
+static void shade_cb(lv_event_t *e) {
+  int a = (int)(intptr_t)lv_event_get_user_data(e);
+  if (a < 0) { shade_close(); return; }                       // tocco fuori dal pannello
+  if (a >= 100) { shade_close(); al_show(a - 100); return; }   // riapre un avviso
+  switch (a) {
+    case 1: pause_set(!g_userPause, 0); break;
+    case 2: shade_close(); tm_menu_open(nullptr); return;
+    case 3: g_briIdx = (g_briIdx + 1) % 3; g_prefs.putInt("bri", g_briIdx); apply_brightness(); break;
+    case 4: g_pcSound = !g_pcSound; g_prefs.putBool("pcsnd", g_pcSound); break;
+  }
+  shade_open(false);                                           // ridisegna con i nuovi valori
+}
+static void shade_open(bool anim) {
+  shade_close();
+  lv_obj_t *s = plain_obj(lv_layer_top());
+  g_shade = s;
+  lv_obj_set_size(s, 480, 320);
+  lv_obj_set_style_bg_color(s, lv_color_hex(C_BG), 0);
+  lv_obj_set_style_bg_opa(s, LV_OPA_60, 0);
+  lv_obj_add_flag(s, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(s, shade_cb, LV_EVENT_CLICKED, (void *)(intptr_t)-1);
+  lv_obj_t *p = plain_obj(s);
+  g_shadePanel = p;
+  const int H = 262;
+  lv_obj_set_size(p, 480, H);
+  lv_obj_set_pos(p, 0, 0);
+  lv_obj_set_style_bg_color(p, lv_color_hex(C_BG), 0);
+  lv_obj_set_style_bg_opa(p, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_side(p, LV_BORDER_SIDE_BOTTOM, 0);
+  lv_obj_set_style_border_width(p, 1, 0);
+  lv_obj_set_style_border_color(p, lv_color_hex(C_BORDER), 0);
+  lv_obj_add_flag(p, LV_OBJ_FLAG_CLICKABLE);                   // i tocchi sul pannello non chiudono
+  // comandi rapidi
+  char bl[20];
+  snprintf(bl, sizeof(bl), TRS("luce %s", "light %s"), bri_label());
+  struct { const char *t; uint32_t c; } Q[4] = {
+    {g_userPause ? TRS("riprendi", "resume") : TRS("pausa", "pause"), g_userPause ? C_WARN : C_TEXT},
+    {g_tmMode ? TRS("timer " U_MIDDOT " in corso", "timer " U_MIDDOT " on") : "timer", g_tmMode ? tm_color() : C_TEXT},
+    {bl, C_TEXT},
+    {g_pcSound ? TRS("suoni pc s\xC3\xAC", "pc sound on") : TRS("suoni pc no", "pc sound off"), g_pcSound ? C_TEXT : C_MUTED},
+  };
+  for (int i = 0; i < 4; i++)
+    tbtn(p, 20 + i * 112, 12, 104, 44, Q[i].t, F12, Q[i].c, C_BORDER, shade_cb, (void *)(intptr_t)(i + 1));
+  tstatic(p, TRS("ultimi avvisi", "recent alerts"), F12, C_MUTED, 20, 70);
+  if (!g_alN) tstatic(p, TRS("nessun avviso recente", "no recent alerts"), F14, C_FAINT, 20, 96);
+  for (int i = 0; i < g_alN; i++) {
+    lv_obj_t *r = plain_obj(p);
+    lv_obj_set_pos(r, 12, 90 + i * 30);
+    lv_obj_set_size(r, 456, 28);
+    lv_obj_add_flag(r, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_bg_color(r, lv_color_hex(C_SURFACE), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(r, LV_OPA_COVER, LV_STATE_PRESSED);
+    lv_obj_add_event_cb(r, shade_cb, LV_EVENT_CLICKED, (void *)(intptr_t)(100 + i));
+    char t[120]; uint32_t col;
+    al_line(i, t, sizeof(t), &col);
+    rrect(r, 8, 10, 8, 8, 4, col);
+    lv_obj_t *l = tstatic(r, t, F12, i ? C_MUTED : C_TEXT, 24, 6);
+    lv_obj_set_width(l, 424);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+  }
+  rrect(p, 220, H - 10, 40, 4, 2, C_BORDER);                   // maniglia: si chiude trascinando su
+  if (anim) {
+    lv_anim_t a;
+    lv_anim_init(&a);
+    lv_anim_set_var(&a, p);
+    lv_anim_set_exec_cb(&a, (lv_anim_exec_xcb_t)lv_obj_set_y);
+    lv_anim_set_values(&a, -H, 0);
+    lv_anim_set_duration(&a, 180);
+    lv_anim_set_path_cb(&a, lv_anim_path_ease_out);
+    lv_anim_start(&a);
+  }
+}
+
 // doppio tocco su "✻ ritmo-code": riapre l'ultimo avviso (soglia/reset o Claude/timer, il piu' recente)
 static void logo_cb(lv_event_t *e) {
   (void)e;
@@ -4070,14 +4200,9 @@ static void logo_cb(lv_event_t *e) {
   uint32_t now = millis();
   if (now - lastClick >= 450) { lastClick = now; return; }
   lastClick = 0;
-  if (g_lastMoAt && g_lastMoAt >= g_lastNtAt) {
-    g_pendPeak = g_lastMoPeak;
-    show_moment(g_lastMoWin, g_lastMoThr);
-    return;
-  }
+  if (g_alN) { al_show(0); return; }
   g_ntReplay = true;
-  if (g_lastNtAt) notice_show(g_lastNt);
-  else {
+  {
     NoticeText n = {};
     n.kind = NT_TIMER; n.col = C_MUTED; n.maxMs = 5000; n.big = -1;
     strcpy(n.legend, TRS("avvisi", "alerts"));
@@ -4948,6 +5073,7 @@ static void render_state() {
   pause_menu_close();
   tm_menu_close();
   wx_week_close();
+  shade_close();
   upd_close();                                   // se l'installazione e' in corso il loop la rimette
   night_clock_close();
   lv_obj_clean(lv_layer_top());
@@ -5480,7 +5606,7 @@ void loop() {
         }
       }
     }
-    if (g_slideSec > 0 && g_ui.tv && !g_refreshing && !g_mo.scrim && !g_nt.scrim && !g_tmMenu && !g_wxWeek && g_screenMode < 2 &&
+    if (g_slideSec > 0 && g_ui.tv && !g_refreshing && !g_mo.scrim && !g_nt.scrim && !g_tmMenu && !g_wxWeek && !g_shade && g_screenMode < 2 &&
         now - g_lastTouchMs > 10000 && now - g_lastSlideMs > (uint32_t)g_slideSec * 1000) {
       g_lastSlideMs = now;
       int next = (g_curTile + 1) % NTILES;
@@ -5494,16 +5620,25 @@ void loop() {
     }
     // torna alla home dopo N minuti senza tocchi (una volta per periodo di inattivita')
     static uint32_t homedFor = 0;
-    if (g_clockIdx && g_ui.tv && g_curTile != 0 && !g_mo.scrim && !g_nt.scrim && !g_pauseMenu && !g_tmMenu && !g_wxWeek && g_screenMode < 2 &&
+    if (g_clockIdx && g_ui.tv && g_curTile != 0 && !g_mo.scrim && !g_nt.scrim && !g_pauseMenu && !g_tmMenu && !g_wxWeek && !g_shade && g_screenMode < 2 &&
         homedFor != g_lastTouchMs && now - g_lastTouchMs > CLOCK_MIN[g_clockIdx] * 60000UL) {
       homedFor = g_lastTouchMs;
       lv_tileview_set_tile_by_index(g_ui.tv, 0, 0, LV_ANIM_ON);
     }
 
+    // pannello a tendina (chiesto dal gesto nel driver del touch)
+    if (g_shadeReq) {
+      int r = g_shadeReq; g_shadeReq = 0;
+      if (r == 2) shade_close();
+      else if (!g_nt.scrim && !g_mo.scrim && !g_pauseMenu && !g_tmMenu && !g_wxWeek && g_screenMode < 2) shade_open(true);
+    }
     // Momenti di soglia: mostra quello in sospeso e anima l'overlay attivo
     if (g_pendWin >= 0 && !g_mo.scrim && !g_refreshing && g_screenMode < 2) {
       show_moment(g_pendWin, g_pendThr);
-      g_lastMoWin = g_pendWin; g_lastMoThr = g_pendThr; g_lastMoPeak = g_pendPeak; g_lastMoAt = millis();
+      AlertRec ar = {};
+      ar.at = (uint32_t)time(nullptr); ar.moment = true;
+      ar.win = g_pendWin; ar.thr = g_pendThr; ar.peak = (uint8_t)g_pendPeak;
+      al_push(ar);
       char t[64], m[64];
       const char *wn = g_pendWin ? TRS("7 giorni", "7-day") : TRS("5 ore", "5-hour");
       if (g_pendThr) {

@@ -16,7 +16,7 @@ const C = {
   BORDER: '#3A3834', TEXT: '#E8E6DF', MUTED: '#8E8B82', FAINT: '#5C5A55', ACCENT: '#D97757',
   OK: '#9BC08A', WARN: '#E0B25A', BAD: '#E06C5A', BLUE: '#7DB9D6', LILAC: '#B7A6E0',
 };
-const CFG = { PIN_LEN: 4, MAX_PIN_ATTEMPTS: 10, LOCKOUT_BASE_SEC: 60, ACCT_MAX: 4, FW: '3.9.4' };
+const CFG = { PIN_LEN: 4, MAX_PIN_ATTEMPTS: 10, LOCKOUT_BASE_SEC: 60, ACCT_MAX: 4, FW: '3.9.5' };
 const DEMO_PIN = '1234';
 
 const $ = (id) => document.getElementById(id);
@@ -1265,6 +1265,73 @@ function setHdrStatus() {
   if (hdrStatus._t !== txt) { hdrStatus._t = txt; setText(hdrStatus, txt, col); }
 }
 let logoClick = 0, demoIdx = 0;
+// ---- cronologia degli avvisi e pannello a tendina ----
+const AL = [];                                  // [0] = il piu' recente, massimo 5
+function alPush(r) { AL.unshift(r); if (AL.length > 5) AL.pop(); }
+function alShow(i) {
+  const r = AL[i]; if (!r) return;
+  if (r.moment) { G.pendPeak = r.peak; showMoment(r.win, r.thr); return; }
+  G.ntReplay = true; noticeShow(r.n); G.ntReplay = false;
+}
+function alLine(r) {
+  const hm = fmtHm(r.at);
+  if (r.moment) {
+    const wn = r.win ? TRS('7 giorni', '7-day') : TRS('5 ore', '5-hour');
+    const col = r.thr >= 100 ? C.BAD : r.thr >= 70 ? C.WARN : r.thr >= 50 ? C.ACCENT : C.OK;
+    return [r.thr ? TRS(`${hm}  finestra ${wn} al ${r.thr}%`, `${hm}  ${wn} window at ${r.thr}%`) : TRS(`${hm}  finestra ${wn} di nuovo libera`, `${hm}  ${wn} window available again`), col];
+  }
+  const n = r.n;
+  const lg = n.kind === NT_CLAUDE ? (n.legend.split(' · ')[1] || '') : n.legend;   // per Claude basta il progetto
+  return [`${hm}  ${n.top}${n.big >= 0 ? ` · ${n.big}${n.unit}` : ''}${lg ? ` · ${lg}` : ''}`, n.col];
+}
+let SHADE = null;
+function shadeClose() { if (SHADE) { SHADE.remove(); SHADE = null; } }
+function shadeOpen(anim) {
+  shadeClose();
+  const s = obj(scr, 0, 0, 480, 320, { background: 'rgba(20,20,19,.6)', zIndex: 55 });
+  s.addEventListener('click', (e) => { e.stopPropagation(); shadeClose(); });
+  SHADE = s;
+  const H = 262;
+  const p = obj(s, 0, 0, 480, H, { background: C.BG, borderBottom: `1px solid ${C.BORDER}`, transition: anim ? 'top .18s ease-out' : '' });
+  p.addEventListener('click', (e) => e.stopPropagation());
+  if (anim) { p.style.top = -H + 'px'; requestAnimationFrame(() => requestAnimationFrame(() => { p.style.top = '0px'; })); }
+  const bri = [TRS('bassa', 'low'), TRS('media', 'medium'), TRS('alta', 'high')][P.bri];
+  const Q = [
+    [P.pause ? TRS('riprendi', 'resume') : TRS('pausa', 'pause'), P.pause ? C.WARN : C.TEXT, () => pauseSet(!P.pause, 0)],
+    [TM.mode ? TRS('timer · in corso', 'timer · on') : 'timer', TM.mode ? tmColor() : C.TEXT, () => { shadeClose(); tmMenuOpen(); return true; }],
+    [TRS(`luce ${bri}`, `light ${bri}`), C.TEXT, () => { P.bri = (P.bri + 1) % 3; applyBrightness(); }],
+    [P.pcsnd ? TRS('suoni pc sì', 'pc sound on') : TRS('suoni pc no', 'pc sound off'), P.pcsnd ? C.TEXT : C.MUTED, () => { P.pcsnd = !P.pcsnd; }],
+  ];
+  Q.forEach(([t, c, fn], i) => {
+    const bt = tbtn(p, t, 104, 44, () => { if (!fn()) shadeOpen(false); }, { color: c, size: 12 });
+    bt.style.left = (20 + i * 112) + 'px'; bt.style.top = '12px';
+  });
+  label(p, TRS('ultimi avvisi', 'recent alerts'), 12, C.MUTED, 20, 70);
+  if (!AL.length) label(p, TRS('nessun avviso recente', 'no recent alerts'), 14, C.FAINT, 20, 96);
+  AL.forEach((r, i) => {
+    const row = obj(p, 12, 90 + i * 30, 456, 28, { cursor: 'pointer' });
+    row.addEventListener('click', (e) => { e.stopPropagation(); shadeClose(); alShow(i); });
+    const [t, col] = alLine(r);
+    rrect(row, 8, 10, 8, 8, 4, col);
+    const l = label(row, escapeHtml(t), 12, i ? C.MUTED : C.TEXT, 24, 6);
+    Object.assign(l.style, { width: '424px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+  });
+  rrect(p, 220, H - 10, 40, 4, 2, C.BORDER);
+}
+// gesto: giu' partendo dalla testata apre, su chiude
+(function shadeGesture() {
+  let sx = 0, sy = 0, down = false, done = false;
+  const z = () => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--zoom')) || 1;
+  const pt = (e) => { const r = scr.getBoundingClientRect(); return [(e.clientX - r.left) / z(), (e.clientY - r.top) / z()]; };
+  scr.addEventListener('pointerdown', (e) => { [sx, sy] = pt(e); down = true; done = false; }, true);
+  scr.addEventListener('pointermove', (e) => {
+    if (!down || done || state !== ST.MAIN) return;
+    const [x, y] = pt(e), dy = y - sy, dx = Math.abs(x - sx);
+    if (!SHADE && sy < 40 && dy > 35 && dy > 2 * dx && !NT && !MO && !TMENU && !WXW) { done = true; shadeOpen(true); }
+    else if (SHADE && dy < -35 && -dy > 2 * dx) { done = true; shadeClose(); }
+  }, true);
+  window.addEventListener('pointerup', () => { down = false; });
+})();
 function uiMain() {
   G.setGroup = 0;   // impostazioni: si riparte dalla pagina principale
   masc.length = 0;
@@ -1275,8 +1342,7 @@ function uiMain() {
     const now = realMs();
     if (now - logoClick < 450) {
       logoClick = 0;
-      if (G.lastMo && (!G.lastNt || G.lastMo.at >= G.lastNt.at)) { G.pendPeak = G.lastMo.peak; showMoment(G.lastMo.win, G.lastMo.thr); }
-      else if (G.lastNt) noticeShow(G.lastNt.n);
+      if (AL.length) alShow(0);
       else noticeShow({ kind: NT_TIMER, col: C.MUTED, maxMs: 5000, big: -1, legend: TRS('avvisi', 'alerts'), top: TRS('nessun avviso recente', 'no recent alerts'),
         word: TRS('tutto tranquillo', 'all quiet'), msg: TRS("qui ritrovi l'ultimo avviso con un doppio tocco", 'double-tap here to see the last alert again') });
     }
@@ -1456,7 +1522,7 @@ let NT = null;
 function noticeClose() { if (NT) { NT.scrim.remove(); NT = null; } }
 function noticeShow(n, t0) {
   noticeClose();
-  if (!t0 && n.legend !== TRS('avvisi', 'alerts')) G.lastNt = { n, at: realMs() };   // ultimo avviso, per il doppio tocco
+  if (!t0 && !G.ntReplay) alPush({ n, at: nowEpoch() });   // cronologia: pannello a tendina e doppio tocco
   const s = obj(scr, 0, 0, 480, 320, { background: C.BG, zIndex: 49, cursor: 'pointer' });
   NT = { scrim: s, kind: n.kind, col: n.col, hop: n.hop, maxMs: n.maxMs, t0: t0 || realMs() };
   s.addEventListener('click', (ev) => { ev.stopPropagation(); noticeClose(); });
@@ -1858,7 +1924,7 @@ function clearScreen() {
   momentClose(); PMENU = null; NC = null;
   // l'avviso a schermo intero sopravvive ai rebuild del dashboard (stesso inizio)
   if (NT) { if (pending === ST.MAIN) { G.ntPend = NT.kind; G.ntT0 = NT.t0; } noticeClose(); }
-  tmMenuClose(); wxWeekClose();
+  tmMenuClose(); wxWeekClose(); shadeClose();
   scr.innerHTML = '';
   UI = {}; hdrStatus = null; pinDots = pinMsg = tokMsg = null; activeTA = null;
 }
@@ -1961,14 +2027,14 @@ function loop() {
       blinkAt = r; blinkClosed = !blinkClosed;
       masc.forEach((m) => { if (m.mood === 1) m.lid.forEach((l) => { l.style.display = blinkClosed ? '' : 'none'; }); });
     }
-    if (P.slide > 0 && UI.tv && !G.refreshing && !MO && !NT && !TMENU && !WXW && G.screenMode < 2 && r - G.lastTouch > 10000 && r - G.lastSlide > P.slide * 1000) {
+    if (P.slide > 0 && UI.tv && !G.refreshing && !MO && !NT && !TMENU && !WXW && !SHADE && G.screenMode < 2 && r - G.lastTouch > 10000 && r - G.lastSlide > P.slide * 1000) {
       G.lastSlide = r; setTile((G.curTile + 1) % NTILES, true);
     }
     if (P.pause && P.pauseUntil && nowEpoch() >= P.pauseUntil) pauseSet(false, 0);
     // torna alla home dopo N minuti senza tocchi (una volta per periodo di inattivita')
-    if (P.clock && UI.tv && G.curTile !== 0 && !MO && !NT && !TMENU && !WXW && !PMENU && G.screenMode < 2 && G.homedFor !== G.lastTouch &&
+    if (P.clock && UI.tv && G.curTile !== 0 && !MO && !NT && !TMENU && !WXW && !SHADE && !PMENU && G.screenMode < 2 && G.homedFor !== G.lastTouch &&
         (r - G.lastTouch) * speed > CLOCK_MIN[P.clock] * 60000) { G.homedFor = G.lastTouch; setTile(0, true); }
-    if (G.pendWin >= 0 && !MO && !G.refreshing && G.screenMode < 2) { showMoment(G.pendWin, G.pendThr); G.lastMo = { win: G.pendWin, thr: G.pendThr, peak: G.pendPeak, at: realMs() }; G.pendWin = -1; }
+    if (G.pendWin >= 0 && !MO && !G.refreshing && G.screenMode < 2) { showMoment(G.pendWin, G.pendThr); alPush({ moment: true, win: G.pendWin, thr: G.pendThr, peak: G.pendPeak, at: nowEpoch() }); G.pendWin = -1; }
     if (MO) momentTick();
     // di notte gli avvisi di Claude Code non compaiono; quelli del timer si' (e riaccendono lo schermo)
     if (G.ntPend === NT_CLAUDE && G.screenMode >= 2 && !G.ntT0) G.ntPend = 0;
@@ -2086,7 +2152,7 @@ function initPanel() {
 }
 
 // accesso per tools/capture_screens.js (immagini del README)
-window.__sim = { API, G, ST, P, boot, requestState, setTile, refreshUiValues, dashTick, showMoment, momentClose, ccEvent, ccBusySet, uiSettings, noticeClose, tmMenuOpen, wxWeekOpen, tmStart, TM, TM_TIMER, TM_FOCUS, TM_BREAK, pauseMenuOpen, pauseMenuClose, nightClockShow, nightClockClose };
+window.__sim = { API, G, ST, P, boot, requestState, setTile, refreshUiValues, dashTick, showMoment, momentClose, ccEvent, ccBusySet, uiSettings, shadeOpen, shadeClose, alPush, noticeClose, tmMenuOpen, wxWeekOpen, tmStart, TM, TM_TIMER, TM_FOCUS, TM_BREAK, pauseMenuOpen, pauseMenuClose, nightClockShow, nightClockClose };
 initPanel();
 applyBrightness();
 boot(true);
