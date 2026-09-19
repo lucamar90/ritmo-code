@@ -95,7 +95,7 @@ async function simShots(browser) {
 }
 
 async function webShot(browser) {
-  const src = fs.readFileSync(path.join(ROOT, 'firmware/claude_stick/status_page.h'), 'utf8');
+  const src = fs.readFileSync(path.join(ROOT, 'firmware/ritmo_code/status_page.h'), 'utf8');
   const html = src.slice(src.indexOf('R"HTML(') + 7, src.indexOf(')HTML"'));
   const now = Math.floor(Date.now() / 1000);
   const hist = [];

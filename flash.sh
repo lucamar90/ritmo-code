@@ -34,6 +34,6 @@ fi
 
 echo "==> schermo trovato su $PORT"
 echo "==> compilazione e caricamento della versione attuale..."
-firmware/claude_stick/build.sh upload "$PORT"
+firmware/ritmo_code/build.sh upload "$PORT"
 echo
 echo "==> fatto! Il dispositivo si riavvia da solo (chiedera' il PIN sullo schermo)."

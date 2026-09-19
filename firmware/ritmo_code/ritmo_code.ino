@@ -1605,8 +1605,9 @@ static void handleUpdateGet() {
     g_web->send(200, "text/html; charset=utf-8", h);
     return;
   }
-  h += F("<p>Firmware attuale v" FW_VERSION ". Scegli il file <code>claude_stick.ino.bin</code> "
-         "(cartella <code>firmware/claude_stick/build/...</code>) e inserisci il codice mostrato sullo schermo.</p>"
+  h += F("<p>Firmware attuale v" FW_VERSION ". Scegli il file <code>ritmo-code-x.y.bin</code> della release "
+         "(o <code>ritmo_code.ino.bin</code> da <code>firmware/ritmo_code/build/...</code> se lo compili tu) "
+         "e inserisci il codice mostrato sullo schermo.</p>"
          "<label for=code>Codice</label><input id=code inputmode=numeric maxlength=6 autocomplete=off>"
          "<label for=bin>File firmware (.bin)</label><input id=bin type=file accept='.bin'>"
          "<button id=go>Carica</button><progress id=pr max=100 value=0 hidden></progress><div id=msg></div>"

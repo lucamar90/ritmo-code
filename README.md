@@ -305,7 +305,7 @@ Prerequisiti (versioni provate):
 - su Windows: **Git Bash** per gli script `.sh`
 
 ```bash
-cd firmware/claude_stick
+cd firmware/ritmo_code
 ./build.sh                    # compila (ottimizzato -O2) ed esporta il .bin
 ./build.sh upload COM3        # compila e carica via USB (macOS: /dev/cu.usbmodemXXXX)
 ./build.sh monitor COM3       # log seriale a 115200
@@ -320,7 +320,7 @@ Sul dispositivo apri **Impostazioni → aggiorna firmware**: compaiono l'indiriz
 6 cifre** valido 5 minuti (5 tentativi sbagliati chiudono la sessione). Poi, dallo stesso Wi-Fi:
 
 - `./build.sh ota <ip> <codice>`, oppure
-- apri `http://<ip>/update`, scegli `build/esp32.esp32.esp32s3/claude_stick.ino.bin` e inserisci il codice.
+- apri `http://<ip>/update`, scegli `build/esp32.esp32.esp32s3/ritmo_code.ino.bin` e inserisci il codice.
 
 Token, PIN, account, storico e impostazioni restano intatti. Il cavo USB funziona sempre come
 alternativa.
@@ -328,7 +328,7 @@ alternativa.
 ### Note di build
 
 `build.sh` passa `-DLV_CONF_INCLUDE_SIMPLE -I<sketch>` così LVGL trova il `lv_conf.h` dello sketch.
-Se compare `lv_conf.h not found`, copia `firmware/claude_stick/lv_conf.h` nella cartella
+Se compare `lv_conf.h not found`, copia `firmware/ritmo_code/lv_conf.h` nella cartella
 `libraries` di Arduino (un livello sopra `lvgl`), proprio **questo** file: il suo
 `#include <stdint.h>` è protetto da `#ifndef __ASSEMBLY__`, senza il quale la compilazione dei file
 `.S` di lvgl fallisce con `Error: unknown opcode or format name 'typedef'`.
@@ -396,8 +396,8 @@ node tools/capture_screens.js
 
 ```
 firmware/
-  claude_stick/                 # il firmware (sketch arduino-cli)
-    claude_stick.ino            # setup/loop, stati, dashboard, schermate, server web
+  ritmo_code/                 # il firmware (sketch arduino-cli)
+    ritmo_code.ino            # setup/loop, stati, dashboard, schermate, server web
     status_page.h               # pannello web servito su "/"
     api.cpp/.h                  # fetchUsage() e sonda dei modelli
     extras.cpp/.h               # meteo (Open-Meteo) e statistiche del PC

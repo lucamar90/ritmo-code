@@ -3,7 +3,7 @@
 gen_logo_assets.py — rasterizza gli SVG ufficiali di Claude Code (assets/brand/)
 in immagini LVGL (ARGB8888) incorporate nel firmware.
 
-Genera firmware/claude_stick/logo_assets.h con:
+Genera firmware/ritmo_code/logo_assets.h con:
   img_wordmark   — logotipo "CLAUDE / CODE" per l'header (h=26)
   img_clawd_sm   — Clawd pixel per l'header (h=26)
   img_clawd_big  — Clawd per le schermate token/caricamento (h=90)
@@ -20,7 +20,7 @@ from PIL import Image
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BRAND = os.path.join(ROOT, "assets", "brand")
-OUT = os.path.join(ROOT, "firmware", "claude_stick", "logo_assets.h")
+OUT = os.path.join(ROOT, "firmware", "ritmo_code", "logo_assets.h")
 
 ICON_SVG = os.path.join(BRAND, "claudecode-color.svg")
 TEXT_SVG = os.path.join(BRAND, "claudecode-text.svg")

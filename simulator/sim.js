@@ -1,5 +1,5 @@
 /*
- * Ritmo Code — simulatore web del firmware (claude_stick.ino)
+ * Ritmo Code — simulatore web del firmware (ritmo_code.ino)
  *
  * Porting 1:1 di layout, palette, macchina a stati e logica (trend, heatmap,
  * soglie, sonda modelli, account) su DOM 480x320. Rete, NVS, crypto e WiFi

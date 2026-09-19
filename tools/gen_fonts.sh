@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# gen_fonts.sh — rigenera i font LVGL del tema "Terminale" (firmware/claude_stick/font_jbm_*.c)
+# gen_fonts.sh — rigenera i font LVGL del tema "Terminale" (firmware/ritmo_code/font_jbm_*.c)
 #
 # JetBrains Mono (OFL) per testo e cifre; i simboli che non ha (✻ ↻ ↵ ✎ e lo spinner
 # di Claude Code · ✢ ✳ ✶ ✽) arrivano da DejaVu Sans Mono. Richiede node (npx) e curl.
@@ -8,7 +8,7 @@
 # in v9) e imposta Montserrat 14 come fallback per i LV_SYMBOL_* della tastiera.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-OUT="firmware/claude_stick"
+OUT="firmware/ritmo_code"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 

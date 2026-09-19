@@ -307,7 +307,7 @@ Prerequisites (tested versions):
 - on Windows: **Git Bash** for the `.sh` scripts
 
 ```bash
-cd firmware/claude_stick
+cd firmware/ritmo_code
 ./build.sh                    # compile (-O2) and export the .bin
 ./build.sh upload COM3        # compile and flash over USB (macOS: /dev/cu.usbmodemXXXX)
 ./build.sh monitor COM3       # serial log at 115200
@@ -322,14 +322,14 @@ On the device open **Settings → update firmware**: it shows its address and a 
 valid for 5 minutes (5 wrong attempts close the session). Then, from the same Wi-Fi:
 
 - `./build.sh ota <ip> <code>`, or
-- open `http://<ip>/update`, pick `build/esp32.esp32.esp32s3/claude_stick.ino.bin` and enter the code.
+- open `http://<ip>/update`, pick `build/esp32.esp32.esp32s3/ritmo_code.ino.bin` and enter the code.
 
 Token, PIN, accounts, history and settings are kept. The USB cable always works as a fallback.
 
 ### Build notes
 
 `build.sh` passes `-DLV_CONF_INCLUDE_SIMPLE -I<sketch>` so LVGL finds the sketch's `lv_conf.h`. If
-you get `lv_conf.h not found`, copy `firmware/claude_stick/lv_conf.h` into your Arduino `libraries`
+you get `lv_conf.h not found`, copy `firmware/ritmo_code/lv_conf.h` into your Arduino `libraries`
 folder (one level above `lvgl`), **this** file specifically: its `#include <stdint.h>` is wrapped in
 `#ifndef __ASSEMBLY__`, without which assembling lvgl's `.S` files fails with
 `Error: unknown opcode or format name 'typedef'`.
@@ -396,8 +396,8 @@ node tools/capture_screens.js
 
 ```
 firmware/
-  claude_stick/                 # the firmware (arduino-cli sketch)
-    claude_stick.ino            # setup/loop, states, dashboard, screens, web server
+  ritmo_code/                 # the firmware (arduino-cli sketch)
+    ritmo_code.ino            # setup/loop, states, dashboard, screens, web server
     status_page.h               # web panel served on "/"
     api.cpp/.h                  # fetchUsage() and model probe
     extras.cpp/.h               # weather (Open-Meteo) and PC statistics
