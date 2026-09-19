@@ -23,13 +23,14 @@ static float jarr(const String& s, const char* key, int n, int from = 0, float d
   if (i < 0) return def;
   i = s.indexOf('[', i);
   if (i < 0) return def;
+  int end = s.indexOf(']', i);                      // oltre la fine dell'array: valore mancante
   i++;
   for (int k = 0; k < n; k++) {
     i = s.indexOf(',', i);
-    if (i < 0) return def;
+    if (i < 0 || i > end) return def;
     i++;
   }
-  return s.substring(i).toFloat();
+  return i >= end ? def : s.substring(i).toFloat();
 }
 // n-esimo elemento di un array di stringhe ISO: "2026-09-17T07:03" -> "07:03"
 static void jarrTime(const String& s, const char* key, int n, int from, char* out) {
@@ -58,8 +59,8 @@ bool fetchWeather(float lat, float lon, WeatherData& out) {
   snprintf(url, sizeof(url),
            "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f"
            "&current=temperature_2m,weather_code,is_day&hourly=precipitation_probability"
-           "&daily=temperature_2m_max,temperature_2m_min,sunrise,sunset,weather_code"
-           "&timezone=auto&forecast_days=2&forecast_hours=12", lat, lon);
+           "&daily=temperature_2m_max,temperature_2m_min,sunrise,sunset,weather_code,precipitation_probability_max"
+           "&timezone=auto&forecast_days=7&forecast_hours=12", lat, lon);
   if (!http.begin(client, url)) return false;
   http.setTimeout(8000);
   int code = http.GET();
@@ -83,11 +84,23 @@ bool fetchWeather(float lat, float lon, WeatherData& out) {
     float p = jarr(s, "precipitation_probability", i, hourly, 0);
     out.rain[i] = (uint8_t)(p < 0 ? 0 : (p > 100 ? 100 : p));
   }
-  out.tmax  = jarr(s, "temperature_2m_max", 0, daily);
-  out.tmin  = jarr(s, "temperature_2m_min", 0, daily);
-  out.tmax2 = jarr(s, "temperature_2m_max", 1, daily);
-  out.tmin2 = jarr(s, "temperature_2m_min", 1, daily);
-  out.code2 = (int)jarr(s, "weather_code", 1, daily);
+  out.days = 0;
+  for (int d = 0; d < 7; d++) {
+    const float NONE = -999;
+    float mx = jarr(s, "temperature_2m_max", d, daily, NONE);
+    if (mx == NONE) break;
+    out.dmax[d]  = mx;
+    out.dmin[d]  = jarr(s, "temperature_2m_min", d, daily);
+    out.dcode[d] = (int)jarr(s, "weather_code", d, daily);
+    float p = jarr(s, "precipitation_probability_max", d, daily);
+    out.drain[d] = (uint8_t)(p < 0 ? 0 : (p > 100 ? 100 : p));
+    out.days = d + 1;
+  }
+  out.tmax  = out.dmax[0];
+  out.tmin  = out.dmin[0];
+  out.tmax2 = out.dmax[1];
+  out.tmin2 = out.dmin[1];
+  out.code2 = out.dcode[1];
   jarrTime(s, "sunrise", 0, daily, out.sunrise);
   jarrTime(s, "sunset", 0, daily, out.sunset);
   out.ok = true;

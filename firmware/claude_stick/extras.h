@@ -16,6 +16,11 @@ struct WeatherData {
   char     sunset[6];
   uint8_t  rain[12];       // probabilita' di pioggia (%) per le prossime 12 ore
   int      rainHour0;      // ora locale della prima voce di rain[]
+  // previsioni della settimana (indice 0 = oggi)
+  int      days;
+  float    dmax[7], dmin[7];
+  int      dcode[7];
+  uint8_t  drain[7];       // probabilita' massima di pioggia del giorno (%)
 };
 
 #define PC_MAX_DISKS 6

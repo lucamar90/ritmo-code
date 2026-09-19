@@ -970,7 +970,9 @@ function weeksRedraw() {
 const CLOCK_MIN = [0, 2, 5, 10];
 // dati di esempio: sul dispositivo arrivano da Open-Meteo e da SmallTV Monitor sul PC
 const WX = { ok: true, city: 'Milano', temp: 22, code: 2, day: true, tmax: 23, tmin: 18, tmax2: 22, tmin2: 18, code2: 80,
-  sunrise: '07:03', sunset: '19:30', rainH0: 13, rain: [0, 3, 3, 3, 3, 5, 18, 45, 55, 30, 23, 25] };
+  sunrise: '07:03', sunset: '19:30', rainH0: 13, rain: [0, 3, 3, 3, 3, 5, 18, 45, 55, 30, 23, 25],
+  // settimana (indice 0 = oggi): massima, minima, codice, pioggia massima %
+  week: [[23, 18, 2, 45], [22, 18, 80, 70], [20, 15, 61, 85], [21, 14, 3, 20], [24, 15, 1, 5], [26, 16, 0, 0], [25, 17, 95, 60]] };
 const PC = { ok: true, host: '192.168.1.10:8765', cpu: 12, cpuT: 56, ram: 61, gpu: 4, gpuT: 35, disk: 57 };
 function wxGroup(c) { if (c === 0) return 0; if (c <= 2) return 1; if (c === 3) return 2; if (c === 45 || c === 48) return 3;
   if ((c >= 71 && c <= 77) || c === 85 || c === 86) return 5; if (c >= 95) return 6; if (c >= 51) return 4; return 2; }
@@ -995,6 +997,31 @@ function wxIcon(b, code, day) {
   if (g === 5) [10, 20, 30].forEach((x, i) => rrect(b, x, i === 1 ? 35 : 32, 4, 4, 2, C.TEXT));
   if (g === 6) b.insertAdjacentHTML('beforeend', `<svg style="position:absolute;left:0;top:0" width="44" height="44"><polyline points="20,26 14,34 22,34 16,42" fill="none" stroke="${C.WARN}" stroke-width="3"/></svg>`);
 }
+// ---- previsioni della settimana: toccando il meteo nella home ----
+let WXW = null;
+function wxWeekClose() { if (WXW) { WXW.remove(); WXW = null; } }
+function wxWeekOpen() {
+  wxWeekClose();
+  const s = obj(scr, 0, 0, 480, 320, { background: C.BG, zIndex: 60, cursor: 'pointer' });
+  s.addEventListener('click', (e) => { e.stopPropagation(); wxWeekClose(); });
+  WXW = s;
+  tbox(s, 10, 14, 460, 296, TRS(`meteo · ${WX.city.toLowerCase()} · 7 giorni`, `weather · ${WX.city.toLowerCase()} · 7 days`));
+  const GI = ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'], GE = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+  const col = (txt, size, color, x, y) => { const l = label(s, txt, size, color, x, y); Object.assign(l.style, { width: '64px', textAlign: 'center' }); };
+  WX.week.forEach(([mx, mn, code, rain], d) => {
+    const x = 16 + d * 64, p = localParts(nowEpoch() + d * 86400);
+    col(d === 0 ? TRS('oggi', 'today') : (P.lang ? GE : GI)[p.wd], 14, d === 0 ? C.ACCENT : C.TEXT, x, 44);
+    col(`${p.d}/${p.mo}`, 12, C.MUTED, x, 64);
+    wxIcon(obj(s, x + 10, 88, 44, 44), code, true);
+    col(`${mx}°`, 22, C.TEXT, x, 144);
+    col(`${mn}°`, 14, C.MUTED, x, 174);
+    col(`${rain}%`, 12, rain >= 40 ? C.BLUE : C.FAINT, x, 198);
+    if (d) obj(s, x, 48, 1, 164, { background: C.BORDER });
+  });
+  const f = label(s, TRS(`oggi: ${wxDesc(WX.code)} · sole ${WX.sunrise}-${WX.sunset}`, `today: ${wxDesc(WX.code)} · sun ${WX.sunrise}-${WX.sunset}`), 12, C.MUTED, 10, 236);
+  Object.assign(f.style, { width: '460px', textAlign: 'center' });
+  label(s, TRS('[ tocca per chiudere ]', '[ tap to close ]'), 11, C.FAINT, 292, 284);
+}
 function buildTileHome(t) {
   UI.hm = {};
   const h = UI.hm;
@@ -1011,6 +1038,10 @@ function buildTileHome(t) {
   h.desc = label(t, '', 12, C.MUTED, 310, 56);
   h.rain = label(t, '', 12, C.MUTED, 310, 72);
   h.sun = label(t, '', 12, C.FAINT, 310, 88);
+  for (const o of [h.icon, h.temp, h.desc, h.rain, h.sun]) {   // tocca il meteo: previsioni della settimana
+    o.style.cursor = 'pointer';
+    o.addEventListener('click', (e) => { if (realMs() - lastDragAt < 300) return; e.stopPropagation(); wxWeekOpen(); });
+  }
   const b = tbox(t, 13, 115, 454, 74, 'claude');
   h.row = [0, 1].map((i) => {
     const y = 13 + i * 30;
@@ -1768,7 +1799,7 @@ function clearScreen() {
   momentClose(); PMENU = null; NC = null;
   // l'avviso a schermo intero sopravvive ai rebuild del dashboard (stesso inizio)
   if (NT) { if (pending === ST.MAIN) { G.ntPend = NT.kind; G.ntT0 = NT.t0; } noticeClose(); }
-  tmMenuClose();
+  tmMenuClose(); wxWeekClose();
   scr.innerHTML = '';
   UI = {}; hdrStatus = null; pinDots = pinMsg = tokMsg = null; activeTA = null;
 }
@@ -1871,12 +1902,12 @@ function loop() {
       blinkAt = r; blinkClosed = !blinkClosed;
       masc.forEach((m) => { if (m.mood === 1) m.lid.forEach((l) => { l.style.display = blinkClosed ? '' : 'none'; }); });
     }
-    if (P.slide > 0 && UI.tv && !G.refreshing && !MO && !NT && !TMENU && G.screenMode < 2 && r - G.lastTouch > 10000 && r - G.lastSlide > P.slide * 1000) {
+    if (P.slide > 0 && UI.tv && !G.refreshing && !MO && !NT && !TMENU && !WXW && G.screenMode < 2 && r - G.lastTouch > 10000 && r - G.lastSlide > P.slide * 1000) {
       G.lastSlide = r; setTile((G.curTile + 1) % NTILES, true);
     }
     if (P.pause && P.pauseUntil && nowEpoch() >= P.pauseUntil) pauseSet(false, 0);
     // torna alla home dopo N minuti senza tocchi (una volta per periodo di inattivita')
-    if (P.clock && UI.tv && G.curTile !== 0 && !MO && !NT && !TMENU && !PMENU && G.screenMode < 2 && G.homedFor !== G.lastTouch &&
+    if (P.clock && UI.tv && G.curTile !== 0 && !MO && !NT && !TMENU && !WXW && !PMENU && G.screenMode < 2 && G.homedFor !== G.lastTouch &&
         (r - G.lastTouch) * speed > CLOCK_MIN[P.clock] * 60000) { G.homedFor = G.lastTouch; setTile(0, true); }
     if (G.pendWin >= 0 && !MO && !G.refreshing && G.screenMode < 2) { showMoment(G.pendWin, G.pendThr); G.pendWin = -1; }
     if (MO) momentTick();
@@ -1991,7 +2022,7 @@ function initPanel() {
 }
 
 // accesso per tools/capture_screens.js (immagini del README)
-window.__sim = { API, G, ST, P, boot, requestState, setTile, refreshUiValues, dashTick, showMoment, momentClose, ccEvent, noticeClose, tmMenuOpen, tmStart, TM, TM_TIMER, TM_FOCUS, TM_BREAK, pauseMenuOpen, pauseMenuClose, nightClockShow, nightClockClose };
+window.__sim = { API, G, ST, P, boot, requestState, setTile, refreshUiValues, dashTick, showMoment, momentClose, ccEvent, noticeClose, tmMenuOpen, wxWeekOpen, tmStart, TM, TM_TIMER, TM_FOCUS, TM_BREAK, pauseMenuOpen, pauseMenuClose, nightClockShow, nightClockClose };
 initPanel();
 applyBrightness();
 boot(true);

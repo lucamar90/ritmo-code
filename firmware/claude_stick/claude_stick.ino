@@ -2671,6 +2671,72 @@ static void wx_icon(lv_obj_t *b, int code, bool day) {
     lv_obj_set_style_line_color(l, lv_color_hex(C_WARN), 0);
   }
 }
+// ---- Previsioni della settimana: si aprono toccando il meteo nella home ----
+static lv_obj_t *g_wxWeek = nullptr;
+static void wx_week_close() { if (g_wxWeek) { lv_obj_delete(g_wxWeek); g_wxWeek = nullptr; } }
+static void wx_week_close_cb(lv_event_t *e) { (void)e; wx_week_close(); }
+static void wx_week_open(lv_event_t *e) {
+  (void)e;
+  if (g_wxWeek) return;
+  lv_obj_t *s = plain_obj(lv_layer_top());
+  g_wxWeek = s;
+  lv_obj_set_size(s, 480, 320);
+  lv_obj_set_style_bg_color(s, lv_color_hex(C_BG), 0);
+  lv_obj_set_style_bg_opa(s, LV_OPA_COVER, 0);
+  lv_obj_add_flag(s, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(s, wx_week_close_cb, LV_EVENT_CLICKED, NULL);
+  char lg[48], city[24];
+  strlcpy(city, g_wxCity, sizeof(city));
+  for (char *q = city; *q; q++) if (*q >= 'A' && *q <= 'Z') *q += 32;
+  snprintf(lg, sizeof(lg), TRS("meteo " U_MIDDOT " %s " U_MIDDOT " 7 giorni", "weather " U_MIDDOT " %s " U_MIDDOT " 7 days"), city);
+  tbox(s, 10, 14, 460, 296, lg, C_BORDER);
+  time_t now = time(nullptr);
+  if (!g_wx.ok || g_wx.days == 0 || now < 1000000000L) {
+    tstatic(s, TRS("previsioni in arrivo...", "loading forecast..."), F14, C_MUTED, 34, 60);
+  } else {
+    static const char *GIT[7] = {"dom", "lun", "mar", "mer", "gio", "ven", "sab"};
+    static const char *GEN[7] = {"sun", "mon", "tue", "wed", "thu", "fri", "sat"};
+    // una colonna per giorno: giorno, data, icona, massima, minima, pioggia
+    auto col = [&](const char *txt, const lv_font_t *f, uint32_t c, int x, int y) {
+      lv_obj_t *l = tstatic(s, txt, f, c, x, y);
+      lv_obj_set_width(l, 64);
+      lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+    };
+    for (int d = 0; d < g_wx.days && d < 7; d++) {
+      int x = 16 + d * 64;
+      time_t t = now + (time_t)d * 86400;
+      struct tm tv; localtime_r(&t, &tv);
+      char b[16];
+      col(d == 0 ? TRS("oggi", "today") : (g_lang ? GEN : GIT)[tv.tm_wday], F14, d == 0 ? C_ACCENT : C_TEXT, x, 44);
+      snprintf(b, sizeof(b), "%d/%d", tv.tm_mday, tv.tm_mon + 1);
+      col(b, F12, C_MUTED, x, 64);
+      lv_obj_t *ic = plain_obj(s);
+      lv_obj_set_pos(ic, x + 10, 88);
+      lv_obj_set_size(ic, 44, 44);
+      wx_icon(ic, g_wx.dcode[d], true);
+      snprintf(b, sizeof(b), "%.0f\xC2\xB0", g_wx.dmax[d]);
+      col(b, F22, C_TEXT, x, 144);
+      snprintf(b, sizeof(b), "%.0f\xC2\xB0", g_wx.dmin[d]);
+      col(b, F14, C_MUTED, x, 174);
+      snprintf(b, sizeof(b), "%d%%", g_wx.drain[d]);
+      col(b, F12, g_wx.drain[d] >= 40 ? C_BLUE : C_FAINT, x, 198);
+      if (d) {                                      // separatore tra i giorni
+        lv_obj_t *sep = plain_obj(s);
+        lv_obj_set_pos(sep, x, 48); lv_obj_set_size(sep, 1, 164);
+        lv_obj_set_style_bg_color(sep, lv_color_hex(C_BORDER), 0);
+        lv_obj_set_style_bg_opa(sep, LV_OPA_COVER, 0);
+      }
+    }
+    char f[64];
+    snprintf(f, sizeof(f), TRS("oggi: %s " U_MIDDOT " sole %s-%s", "today: %s " U_MIDDOT " sun %s-%s"),
+             wx_desc(g_wx.code), g_wx.sunrise, g_wx.sunset);
+    lv_obj_t *fl = tstatic(s, f, F12, C_MUTED, 10, 236);
+    lv_obj_set_width(fl, 460);
+    lv_obj_set_style_text_align(fl, LV_TEXT_ALIGN_CENTER, 0);
+  }
+  tstatic(s, TRS("[ tocca per chiudere ]", "[ tap to close ]"), F12, C_FAINT, 290, 280);
+}
+
 static void build_tile_home(lv_obj_t *t) {
   // griglia aurea: colonna sinistra fino a x 297 (480 / phi), meteo da 310
   g_ui.hmTime = tlabel(t, F96, C_TEXT, 7, 7);
@@ -2708,6 +2774,11 @@ static void build_tile_home(lv_obj_t *t) {
   for (lv_obj_t *l : {g_ui.hmDesc, g_ui.hmRain, g_ui.hmSun}) {
     lv_obj_set_width(l, 157);
     lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+  }
+  // tocca il meteo: previsioni della settimana
+  for (lv_obj_t *o : {g_ui.hmWxIcon, tr, g_ui.hmDesc, g_ui.hmRain, g_ui.hmSun}) {
+    lv_obj_add_flag(o, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(o, wx_week_open, LV_EVENT_SHORT_CLICKED, NULL);
   }
 
   // centrato tra la riga della data (lettere fino a y 98) e il riquadro pc (y 206): 17 sopra e 17 sotto;
@@ -4621,6 +4692,7 @@ static void render_state() {
   }
   pause_menu_close();
   tm_menu_close();
+  wx_week_close();
   night_clock_close();
   lv_obj_clean(lv_layer_top());
   // invalida i puntatori vivi prima di distruggere la vecchia schermata
@@ -5083,7 +5155,7 @@ void loop() {
         }
       }
     }
-    if (g_slideSec > 0 && g_ui.tv && !g_refreshing && !g_mo.scrim && !g_nt.scrim && !g_tmMenu && g_screenMode < 2 &&
+    if (g_slideSec > 0 && g_ui.tv && !g_refreshing && !g_mo.scrim && !g_nt.scrim && !g_tmMenu && !g_wxWeek && g_screenMode < 2 &&
         now - g_lastTouchMs > 10000 && now - g_lastSlideMs > (uint32_t)g_slideSec * 1000) {
       g_lastSlideMs = now;
       int next = (g_curTile + 1) % NTILES;
@@ -5097,7 +5169,7 @@ void loop() {
     }
     // torna alla home dopo N minuti senza tocchi (una volta per periodo di inattivita')
     static uint32_t homedFor = 0;
-    if (g_clockIdx && g_ui.tv && g_curTile != 0 && !g_mo.scrim && !g_nt.scrim && !g_pauseMenu && !g_tmMenu && g_screenMode < 2 &&
+    if (g_clockIdx && g_ui.tv && g_curTile != 0 && !g_mo.scrim && !g_nt.scrim && !g_pauseMenu && !g_tmMenu && !g_wxWeek && g_screenMode < 2 &&
         homedFor != g_lastTouchMs && now - g_lastTouchMs > CLOCK_MIN[g_clockIdx] * 60000UL) {
       homedFor = g_lastTouchMs;
       lv_tileview_set_tile_by_index(g_ui.tv, 0, 0, LV_ANIM_ON);
