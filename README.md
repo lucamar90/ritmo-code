@@ -9,7 +9,7 @@ Senza computer acceso, senza app, senza cloud.
 
 **Italiano** · [English](README.en.md)
 
-<img src="https://img.shields.io/badge/firmware-v3.8-D97757?style=for-the-badge" alt="firmware v3.8">
+<img src="https://img.shields.io/badge/firmware-v3.9-D97757?style=for-the-badge" alt="firmware v3.9">
 <img src="https://img.shields.io/badge/ESP32--S3-AXS15231B%20480×320-1B1A18?style=for-the-badge" alt="ESP32-S3 AXS15231B">
 <img src="https://img.shields.io/badge/LVGL-9.2.2-9BC08A?style=for-the-badge" alt="LVGL 9.2.2">
 <img src="https://img.shields.io/badge/account-fino%20a%204-8E8B82?style=for-the-badge" alt="fino a 4 account">
@@ -196,7 +196,9 @@ Per toglierli: **Disattiva** nella stessa pagina.
 Quando il dispositivo mostra un avviso (fine del timer, pausa e ripresa del pomodoro, Claude ha finito o
 aspetta, soglie di utilizzo e reset) lo manda anche al PC collegato, che suona (un suono diverso per ogni
 tipo) e mostra una notifica di Windows. Nella pagina `http://127.0.0.1:8765/`, riquadro *suoni e
-notifiche*, scegli suono, notifica e volume; **Prova** fa sentire com'è. Sul dispositivo si accende e
+notifiche*, scegli suono e notifica e il tipo di suono: **suoni di Windows** (predefiniti, seguono il volume
+dei *Suoni di sistema* e si sentono anche in desktop remoto) o **melodie Ritmo Code** (con volume proprio);
+**Prova** fa sentire com'è. Sul dispositivo si accende e
 spegne da *Impostazioni → suoni sul pc*; di notte resta muto. Il PC accetta gli avvisi solo dal
 dispositivo collegato.
 

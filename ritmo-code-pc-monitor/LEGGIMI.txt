@@ -34,7 +34,8 @@ permesso. Quando mostrarli si sceglie sul dispositivo: Impostazioni -> avvisi cl
 SUONI E NOTIFICHE
 Quando il dispositivo mostra un avviso (fine del timer, pausa e ripresa del pomodoro, Claude ha
 finito o aspetta, soglie di utilizzo) questo PC suona e mostra una notifica di Windows.
-Nella pagina http://127.0.0.1:8765/ scegli suono, notifica e volume ("Prova" per sentirlo).
+Nella pagina http://127.0.0.1:8765/ scegli suono, notifica e tipo di suono ("Prova" per sentirlo):
+suoni di Windows (predefiniti, si sentono anche in desktop remoto) o melodie Ritmo Code.
 Sul dispositivo: Impostazioni -> suoni sul pc. Di notte resta muto.
 
 NOTE
