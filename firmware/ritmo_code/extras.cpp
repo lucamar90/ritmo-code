@@ -235,3 +235,29 @@ bool fetchPcStats(const char* host, PcStats& out) {
   out.ok = true;
   return true;
 }
+
+static String urlenc(const char* s) {
+  String o;
+  static const char* H = "0123456789ABCDEF";
+  for (; *s; s++) {
+    uint8_t c = (uint8_t)*s;
+    if (isalnum(c) || c == '-' || c == '_' || c == '.') o += (char)c;
+    else { o += '%'; o += H[c >> 4]; o += H[c & 15]; }
+  }
+  return o;
+}
+
+bool postPcNotify(const char* host, const char* ev, const char* title, const char* msg) {
+  if (!host || !host[0]) return false;
+  WiFiClient client;
+  HTTPClient http;
+  if (!http.begin(client, String("http://") + host + "/notify")) return false;
+  http.setConnectTimeout(2000);
+  http.setTimeout(2000);
+  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+  String body = "ev=" + urlenc(ev) + "&title=" + urlenc(title) + "&msg=" + urlenc(msg);
+  int code = http.POST(body);
+  http.end();
+  Serial.printf("[PC] avviso %s -> %d\n", ev, code);
+  return code >= 200 && code < 300;
+}

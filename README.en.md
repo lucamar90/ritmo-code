@@ -195,6 +195,14 @@ always show unless it is *off*.
 
 To remove them: **Disattiva** on the same page.
 
+**6. Sounds and notifications on the PC**
+
+When the device shows an alert (timer end, pomodoro break and restart, Claude done or waiting, usage
+thresholds and resets) it also sends it to the paired PC, which plays a sound (a different one per type)
+and shows a Windows notification. On `http://127.0.0.1:8765/`, box *suoni e notifiche*, choose sound,
+notification and volume; **Prova** plays a sample. On the device it is toggled in *Settings → sounds on
+pc*; it stays silent at night. The PC only accepts alerts from the paired device.
+
 <br clear="right">
 
 **Troubleshooting**

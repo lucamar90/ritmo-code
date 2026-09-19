@@ -46,7 +46,7 @@ const pad2 = (n) => String(n).padStart(2, '0');
 
 // ---------- stato persistente (NVS simulata) ----------
 const TZ_ROME = 99;
-const P = { lang: 0, tz: TZ_ROME, poll: 120, slide: 0, heatm: 3, bri: 1, pinatt: 0, rstal: true, ccal: 2, night: 0, nightp: true, dim: 0, pause: false, pauseUntil: 0, clock: 0, nightclk: true, nightbri: 0 };
+const P = { lang: 0, tz: TZ_ROME, poll: 120, slide: 0, heatm: 3, bri: 1, pinatt: 0, rstal: true, ccal: 2, pcsnd: true, night: 0, nightp: true, dim: 0, pause: false, pauseUntil: 0, clock: 0, nightclk: true, nightbri: 0 };
 const TRS = (pt, en) => (P.lang ? en : pt);
 
 // ---------- stato app ----------
@@ -1583,6 +1583,7 @@ function uiSettings() {
   kvRow(lst, TRS('fuso orario', 'timezone'), tzVal(), (v) => { const i = TZ_OPTS.indexOf(P.tz); P.tz = TZ_OPTS[(i + 1) % TZ_OPTS.length]; setText(v, tzVal()); });
   kvRow(lst, TRS('avviso reset', 'reset alert'), P.rstal ? TRS('sopra 80%', 'above 80%') : TRS('spento', 'off'), () => { P.rstal = !P.rstal; requestState(ST.SETTINGS); });
   const CCL = [TRS('spento', 'off'), TRS('sempre', 'always'), TRS('oltre 1 min', 'over 1 min'), TRS('oltre 5 min', 'over 5 min')];
+  kvRow(lst, TRS('suoni sul pc', 'sounds on pc'), P.pcsnd ? TRS('acceso', 'on') : TRS('spento', 'off'), () => { P.pcsnd = !P.pcsnd; requestState(ST.SETTINGS); });
   kvRow(lst, TRS('avvisi claude code', 'claude code alerts'), CCL[P.ccal], () => { P.ccal = (P.ccal + 1) % 4; requestState(ST.SETTINGS); });
   kvRow(lst, TRS("luminosita'", 'brightness'), briN(), (v) => { P.bri = (P.bri + 1) % 3; applyBrightness(); setText(v, briN()); });
   const NL = ['', '22:00-07:00', '23:00-07:00', '00:00-07:00'];

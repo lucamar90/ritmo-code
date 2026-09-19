@@ -28,7 +28,7 @@ import winreg
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP = "ritmo-code-pc-monitor"
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 DEFAULT_PORT = 8765
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "RitmoCodePcMonitor")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
@@ -591,6 +591,83 @@ def push_event(event):
         pass
 
 
+# ---------------------------------------------------------------------------
+# Suoni e notifiche sul PC per gli avvisi del dispositivo (timer, pomodoro, Claude, soglie)
+# ---------------------------------------------------------------------------
+
+# note (frequenza Hz, durata s) per evento; 0 = pausa
+SOUNDS = {
+    "break": [(659, 0.18), (523, 0.4)],                          # pausa: scende, tranquillo
+    "focus": [(523, 0.13), (659, 0.13), (784, 0.35)],            # si riparte: sale
+    "timer": [(880, 0.15), (0, 0.08), (880, 0.15), (0, 0.08), (880, 0.35)],
+    "cycle": [(523, 0.12), (659, 0.12), (784, 0.12), (1047, 0.45)],
+    "done":  [(784, 0.12), (1047, 0.4)],                         # Claude ha finito
+    "perm":  [(659, 0.2), (0, 0.06), (659, 0.3)],                # Claude aspetta
+    "ask":   [(659, 0.2), (0, 0.06), (659, 0.3)],
+    "thr":   [(440, 0.18), (0, 0.06), (440, 0.3)],               # soglia di utilizzo
+    "reset": [(523, 0.15), (784, 0.4)],                          # finestra di nuovo disponibile
+}
+DEFAULT_NOTIFY = {"sound": True, "toast": True, "volume": 60}
+_sound_lock = threading.Lock()
+_sound_cache = {}
+TRAY = None                                   # icona nell'area di notifica, se attiva
+
+
+def notify_settings():
+    cfg = load_config()
+    return {k: cfg.get(k, v) for k, v in DEFAULT_NOTIFY.items()}
+
+
+def _chime(notes, volume):
+    """WAV mono 16 bit in memoria: toni con attacco breve e coda che si spegne (suono da campanella)."""
+    import io
+    import math
+    import struct
+    import wave
+    rate, amp = 22050, 32767 * 0.8 * max(0, min(100, volume)) / 100
+    frames = bytearray()
+    for freq, dur in notes:
+        n = int(rate * dur)
+        for i in range(n):
+            if not freq:
+                frames += b"\0\0"
+                continue
+            env = min(1.0, i / (0.004 * rate)) * math.exp(-4.0 * i / n)
+            t = 2 * math.pi * freq * i / rate
+            frames += struct.pack("<h", int(amp * env * (0.8 * math.sin(t) + 0.2 * math.sin(2 * t))))
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(bytes(frames))
+    return buf.getvalue()
+
+
+def play_sound(ev, volume):
+    import winsound
+    notes = SOUNDS.get(ev)
+    if not notes or volume <= 0:
+        return
+    key = (ev, volume)
+    if key not in _sound_cache:
+        _sound_cache[key] = _chime(notes, volume)
+    with _sound_lock:                          # un suono alla volta
+        try:
+            winsound.PlaySound(_sound_cache[key], winsound.SND_MEMORY)
+        except Exception as error:
+            print(f"[suono] errore: {error}")
+
+
+def pc_notify(ev, title, msg):
+    """Suono e notifica di Windows secondo le impostazioni della pagina di stato."""
+    s = notify_settings()
+    if s["toast"] and TRAY and title:
+        TRAY.balloon(title, msg)
+    if s["sound"]:
+        play_sound(ev, int(s["volume"]))
+
+
 STATUS_PAGE = """<!doctype html><html lang="it"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Ritmo Code PC Monitor</title>
 <style>
@@ -617,6 +694,12 @@ code{color:var(--ac)}
  <div class=form><button id=hkon>Attiva gli avvisi</button><button id=hkoff>Disattiva</button></div>
  <p class=k style="margin:10px 0 0">Aggiunge tre hook a <code>~/.claude/settings.json</code> (il resto del file non cambia): il dispositivo
  mostra quando Claude ha finito o aspetta un permesso. Valgono per le sessioni di Claude Code aperte da ora in poi.</p></div>
+<div class=box><span class=lg>suoni e notifiche</span>
+ <div class=form><label><input type=checkbox id=snd> suono</label><label><input type=checkbox id=tst> notifica di Windows</label>
+ <label>volume <input type=range id=vol min=0 max=100 step=5></label><button id=try>Prova</button></div>
+ <p class=k style="margin:10px 0 0">Quando il dispositivo mostra un avviso (fine del timer, pausa e ripresa del pomodoro, Claude
+ ha finito o aspetta, soglie di utilizzo) questo PC suona e mostra una notifica. Sul dispositivo si attiva in
+ <i>Impostazioni &rarr; suoni sul pc</i>; di notte resta muto.</p></div>
 </main><script>
 var $=function(i){return document.getElementById(i)};
 function pc(){fetch('/data.json').then(function(r){return r.json()}).then(function(d){
@@ -642,6 +725,11 @@ function hks(){fetch('/api/hooks').then(function(r){return r.json()}).then(hk)}
 function hkset(on){fetch('/api/hooks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({install:on})})
  .then(function(r){return r.json()}).then(hk)}
 $('hkon').onclick=function(){hkset(true)};$('hkoff').onclick=function(){hkset(false)};
+function ns(j){$('snd').checked=j.sound;$('tst').checked=j.toast;$('vol').value=j.volume}
+function nset(extra){var b={sound:$('snd').checked,toast:$('tst').checked,volume:+$('vol').value};for(var k in extra)b[k]=extra[k];
+ fetch('/api/notify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}).then(function(r){return r.json()}).then(ns)}
+$('snd').onchange=$('tst').onchange=$('vol').onchange=function(){nset()};$('try').onclick=function(){nset({test:true})};
+fetch('/api/notify').then(function(r){return r.json()}).then(ns);
 pc();setInterval(pc,2000);scan();hks();setInterval(hks,5000);
 </script></body></html>"""
 
@@ -684,6 +772,8 @@ def make_handler(sampler, lhm, port):
                     cfg["device"] = devices[0]["ip"]
                     save_config(cfg)
                 self._send(200, "application/json", json.dumps(devices))
+            elif path == "/api/notify" and self._local():
+                self._send(200, "application/json", json.dumps(notify_settings()))
             elif path == "/api/hooks" and self._local():
                 self._send(200, "application/json", json.dumps(self._hooks(hooks_status(port))))
             elif path == "/":
@@ -702,10 +792,41 @@ def make_handler(sampler, lhm, port):
             length = min(int(self.headers.get("Content-Length", "0") or 0), 1 << 20)
             return json.loads(self.rfile.read(length).decode("utf-8", "replace") or "{}")
 
+        def _from_device(self):
+            ip = self.client_address[0]
+            return ip in (DEVICE_SEEN["ip"], load_config().get("device"))
+
         def do_POST(self):
             path = self.path.split("?")[0]
+            if path == "/notify" and self._from_device():   # avviso dal dispositivo: suono e notifica
+                try:
+                    length = min(int(self.headers.get("Content-Length", "0") or 0), 4096)
+                    form = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8", "replace"))
+                except Exception:
+                    form = {}
+                self.send_response(204)
+                self.send_header("Connection", "close")
+                self.end_headers()
+                get = lambda k: (form.get(k) or [""])[0][:120]
+                threading.Thread(target=pc_notify, args=(get("ev"), get("title"), get("msg")), daemon=True).start()
+                return
             if not self._local():
                 self._send(404, "text/plain", "not found")
+                return
+            if path == "/api/notify":
+                try:
+                    req = self._body()
+                except Exception:
+                    req = {}
+                cfg = load_config()
+                for k, v in DEFAULT_NOTIFY.items():
+                    if k in req:
+                        cfg[k] = max(0, min(100, int(req[k]))) if k == "volume" else bool(req[k])
+                save_config(cfg)
+                if req.get("test"):
+                    threading.Thread(target=pc_notify, args=("break", "Ritmo Code - prova",
+                                                             "Cosi' suonano gli avvisi del dispositivo"), daemon=True).start()
+                self._send(200, "application/json", json.dumps(notify_settings()))
                 return
             if path.startswith("/claude/"):          # hook di Claude Code: nessuna risposta (finirebbe nel contesto)
                 kind = path[len("/claude/"):]
@@ -782,6 +903,7 @@ class TrayIcon:
     """Icona con suggerimento aggiornato e menu: pagina di collegamento, pannello del dispositivo, esci."""
 
     WM_TRAY = 0x8000 + 1          # WM_APP + 1
+    WM_BALLOON = 0x8000 + 2       # notifica chiesta da un altro thread
     WM_TIMER, WM_DESTROY, WM_COMMAND = 0x0113, 0x0002, 0x0111
     ID_OPEN, ID_DEVICE, ID_EXIT = 1, 2, 3
 
@@ -806,6 +928,8 @@ class TrayIcon:
         u.LoadIconW.argtypes = [wt.HINSTANCE, wt.LPVOID]
         u.LoadIconW.restype = wt.HICON
         u.RegisterWindowMessageW.restype = wt.UINT
+        u.PostMessageW.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM]
+        self.balloon_text = None
         self.shell32.Shell_NotifyIconW.argtypes = [wt.DWORD, ctypes.POINTER(_NotifyIconData)]
         self.shell32.ExtractIconW.argtypes = [wt.HINSTANCE, wt.LPCWSTR, wt.UINT]   # handle a 64 bit
         self.shell32.ExtractIconW.restype = wt.HICON
@@ -879,7 +1003,27 @@ class TrayIcon:
             self.shell32.Shell_NotifyIconW(2, ctypes.byref(self.nid))            # NIM_DELETE
             os._exit(0)
 
+    def balloon(self, title, msg):
+        """Notifica di Windows dall'icona (qualsiasi thread: la mostra il thread della finestra)."""
+        self.balloon_text = (title, msg)
+        self.user32.PostMessageW(self.hwnd, self.WM_BALLOON, 0, 0)
+
+    def _show_balloon(self):
+        if not self.balloon_text:
+            return
+        title, msg = self.balloon_text
+        self.balloon_text = None
+        self.nid.uFlags = 0x1 | 0x2 | 0x4 | 0x10          # + NIF_INFO
+        self.nid.szInfoTitle = title[:63]
+        self.nid.szInfo = (msg or " ")[:255]
+        self.nid.dwInfoFlags = 0x1 | 0x10                 # NIIF_INFO | NIIF_NOSOUND (il suono lo facciamo noi)
+        self.shell32.Shell_NotifyIconW(1, ctypes.byref(self.nid))
+        self.nid.uFlags = 0x1 | 0x2 | 0x4
+
     def _wndproc(self, hwnd, msg, wparam, lparam):
+        if msg == self.WM_BALLOON:
+            self._show_balloon()
+            return 0
         if msg == self.WM_TRAY:
             event = lparam & 0xFFFF
             if event in (0x0205, 0x007B):            # WM_RBUTTONUP, WM_CONTEXTMENU
@@ -951,7 +1095,9 @@ def main():
         return
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        TrayIcon(sampler, args.port).run()
+        global TRAY
+        TRAY = TrayIcon(sampler, args.port)
+        TRAY.run()
     except Exception as error:          # senza area di notifica (es. sessione senza desktop): solo server
         print(f"Icona nell'area di notifica non disponibile: {error}")
         while True:

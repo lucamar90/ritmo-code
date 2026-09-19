@@ -18,6 +18,9 @@ uptime e sessioni di Claude Code aperte.
   `~/.claude/settings.json` (`UserPromptSubmit`, `Stop`, `Notification`). Gli hook mandano l'evento a
   `127.0.0.1:8765/claude/...`, l'app lo inoltra subito al dispositivo (`POST /claude`) e lo espone
   anche in `/data.json`. Il dispositivo mostra quando Claude ha finito o aspetta un permesso.
+- **Suoni e notifiche**: quando il dispositivo mostra un avviso (timer, pomodoro, Claude Code, soglie) lo
+  manda a `POST /notify` (accettato solo dal dispositivo collegato) e il PC suona e mostra una notifica di
+  Windows. Suono, notifica e volume si scelgono nella pagina di stato (pulsante **Prova**).
 
 ## Uso
 

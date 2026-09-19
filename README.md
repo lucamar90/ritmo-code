@@ -191,6 +191,15 @@ oppure **spento**. Le richieste di permesso compaiono sempre, tranne con *spento
 
 Per toglierli: **Disattiva** nella stessa pagina.
 
+**6. Suoni e notifiche sul PC**
+
+Quando il dispositivo mostra un avviso (fine del timer, pausa e ripresa del pomodoro, Claude ha finito o
+aspetta, soglie di utilizzo e reset) lo manda anche al PC collegato, che suona (un suono diverso per ogni
+tipo) e mostra una notifica di Windows. Nella pagina `http://127.0.0.1:8765/`, riquadro *suoni e
+notifiche*, scegli suono, notifica e volume; **Prova** fa sentire com'è. Sul dispositivo si accende e
+spegne da *Impostazioni → suoni sul pc*; di notte resta muto. Il PC accetta gli avvisi solo dal
+dispositivo collegato.
+
 <br clear="right">
 
 **Problemi comuni**

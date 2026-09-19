@@ -31,6 +31,12 @@ Dalle nuove sessioni di Claude Code il dispositivo mostra quando Claude ha finit
 permesso. Quando mostrarli si sceglie sul dispositivo: Impostazioni -> avvisi claude code.
 "Disattiva" li toglie.
 
+SUONI E NOTIFICHE
+Quando il dispositivo mostra un avviso (fine del timer, pausa e ripresa del pomodoro, Claude ha
+finito o aspetta, soglie di utilizzo) questo PC suona e mostra una notifica di Windows.
+Nella pagina http://127.0.0.1:8765/ scegli suono, notifica e volume ("Prova" per sentirlo).
+Sul dispositivo: Impostazioni -> suoni sul pc. Di notte resta muto.
+
 NOTE
 - Windows SmartScreen puo' avvisare che l'app non e' riconosciuta (non e' firmata):
   "Ulteriori informazioni" -> "Esegui comunque".

@@ -262,6 +262,7 @@ static int g_tzOffset = TZ_ROME;          // fuso: TZ_ROME (ora legale auto) o o
 static int g_slideSec = 0;                // slideshow: 0=off, 5/10/15/30s (config, NVS)
 static int g_heatMode = 3;                // 0=oggi 1=7g 2=30g 3=tutto (config, NVS)
 static bool g_resetAlert = true;          // avviso quando una finestra oltre l'80% si libera (NVS "rstal")
+static bool g_pcSound = true;             // suoni e notifiche sul PC per gli avvisi (NVS "pcsnd")
 static int  g_ccAlert = 2;                // avvisi di Claude Code: 0 spento, 1 sempre, 2/3 fine lavoro oltre 1/5 min (NVS "ccal")
 
 // ---- Diagnostica prestazioni (Impostazioni -> Contatore FPS, NVS "perf") ----
@@ -303,6 +304,10 @@ static volatile bool g_wxReq = false, g_wxDone = false, g_pcReq = false, g_pcDon
 static WeatherData g_wxRes = {};
 static PcStats g_pcRes = {};
 static char g_pcReqHost[48] = {0};
+// avviso da mandare al PC (task "extra"): l'ultimo vince
+struct PcNotify { char host[48], ev[8], title[64], msg[96]; };
+static PcNotify g_pcNtf = {};
+static volatile bool g_pcNtfReq = false;
 static SemaphoreHandle_t g_httpsLock = nullptr;
 #define PC_HIST 240                                 // grafici: un punto per lettura (1 s = 4 min, 5 s = 20 min)
 static int g_pcIntIdx = 0;                          // intervallo di lettura del PC (NVS "pcint")
@@ -417,6 +422,7 @@ static void show_moment(int win, int thr);
 static void moment_tick();
 static void moment_close();
 static void cc_event(long id, const char *ev, const char *proj, int dur, int age);
+static char g_ccEv[8], g_ccProj[28];            // ultimo evento di Claude Code da mostrare
 static void tm_menu_open(lv_event_t *e);
 static void tm_label(char *out, size_t sz);
 static uint32_t tm_color();
@@ -827,6 +833,7 @@ static void load_persisted() {
   g_resetAlert = g_prefs.getBool("rstal", true);
   g_pomoToday = g_prefs.getInt("pomn", 0);
   g_pomoDay = g_prefs.getLong("pomday", 0);
+  g_pcSound = g_prefs.getBool("pcsnd", true);
   g_ccAlert = g_prefs.getInt("ccal", 2);
   if (g_ccAlert < 0 || g_ccAlert > 3) g_ccAlert = 2;
   g_nightIdx = g_prefs.getInt("night", 0);
@@ -867,6 +874,15 @@ static bool night_active() {
   return from == 0 ? tv.tm_hour < 7 : (tv.tm_hour >= from || tv.tm_hour < 7);
 }
 static bool night_paused() { return g_nightPause && night_active(); }
+// avviso al PC collegato (suono e notifica di Windows via Ritmo Code PC Monitor); di notte niente
+static void pc_notify(const char *ev, const char *title, const char *msg) {
+  if (!g_pcSound || !g_pcHost[0] || !ev[0] || night_active()) return;
+  strlcpy(g_pcNtf.host, g_pcHost, sizeof(g_pcNtf.host));
+  strlcpy(g_pcNtf.ev, ev, sizeof(g_pcNtf.ev));
+  strlcpy(g_pcNtf.title, title, sizeof(g_pcNtf.title));
+  strlcpy(g_pcNtf.msg, msg, sizeof(g_pcNtf.msg));
+  g_pcNtfReq = true;
+}
 // niente richieste automatiche: pausa manuale o notte (il tasto ↻ aggiorna comunque)
 static bool polling_paused() { return g_userPause || night_paused(); }
 // Orologio notturno a tutto schermo (variante B): ora grande in grigio caldo, data e riepilogo
@@ -3524,6 +3540,7 @@ static int g_ntPend = NT_NONE;                 // avviso da mostrare appena si p
 static uint32_t g_ntT0 = 0;                    // != 0: da rimettere dopo un rebuild (stesso inizio)
 struct NoticeText {
   int kind; uint32_t col, maxMs;
+  char ev[8];                                  // tipo di evento per il suono sul PC
   bool hop, ask;                               // Clawd salta contento / punto di domanda e cornice che pulsa
   char legend[48], top[40], word[24], unit[16], msg[64], foot[40];
   int big;                                     // numero grande (F54, solo cifre); < 0 = mostra `word`
@@ -3539,6 +3556,15 @@ static void notice_close_cb(lv_event_t *e) { (void)e; notice_close(); }
 static void notice_show(const NoticeText &n) {
   notice_close();
   g_nt.kind = n.kind; g_nt.col = n.col; g_nt.hop = n.hop; g_nt.maxMs = n.maxMs;
+  if (!g_ntT0) {                               // avviso nuovo (non rimesso dopo un rebuild): suono sul PC
+    char title[64];
+    if (n.big >= 0) snprintf(title, sizeof(title), "%s " U_MIDDOT " %d%s", n.top, n.big, n.unit);
+    else            strlcpy(title, n.top, sizeof(title));
+    char msg[96];
+    if (n.kind == NT_CLAUDE && g_ccProj[0]) snprintf(msg, sizeof(msg), "%s (%s)", n.msg, g_ccProj);
+    else                                    strlcpy(msg, n.msg, sizeof(msg));
+    pc_notify(n.ev, title, msg);
+  }
   g_nt.t0 = g_ntT0 ? g_ntT0 : millis();
   g_ntT0 = 0;
 
@@ -3610,7 +3636,6 @@ static void notice_tick() {
 // Resta finche' non lo tocchi o scrivi di nuovo a Claude (evento "busy"), al massimo 30 min.
 static const uint16_t CC_MIN_S[4] = {0, 0, 60, 300};   // durata minima del lavoro per l'avviso di fine
 static long g_ccSeen = 0;                      // id dell'ultimo evento gia' visto (crescono sempre)
-static char g_ccEv[8], g_ccProj[28];
 static int  g_ccDur = -1;
 
 static void cc_event(long id, const char *ev, const char *proj, int dur, int age) {
@@ -3635,6 +3660,7 @@ static void cc_show() {
   NoticeText n = {};
   bool done = !strcmp(g_ccEv, "done"), ask = !strcmp(g_ccEv, "ask");
   n.kind = NT_CLAUDE; n.col = done ? C_OK : C_ACCENT; n.maxMs = 30UL * 60UL * 1000UL;
+  strlcpy(n.ev, g_ccEv, sizeof(n.ev));
   n.hop = done; n.ask = !done;
   if (g_ccProj[0]) snprintf(n.legend, sizeof(n.legend), "claude code " U_MIDDOT " %s", g_ccProj);
   else             strcpy(n.legend, "claude code");
@@ -3709,7 +3735,7 @@ static void tm_show() {
   int today = pomo_today();
   if (g_tmNotice == TN_TIMER) {
     n.col = C_WARN; n.maxMs = 10UL * 60UL * 1000UL;
-    strcpy(n.legend, "timer");
+    strcpy(n.legend, "timer"); strcpy(n.ev, "timer");
     strlcpy(n.top, TRS("tempo scaduto", "time's up"), sizeof(n.top));
     n.big = g_tmLenS >= 60 ? g_tmLenS / 60 : g_tmLenS;
     strcpy(n.unit, g_tmLenS >= 60 ? " min" : " s");
@@ -3719,7 +3745,7 @@ static void tm_show() {
     if (now > 1000000000L) { char hm[12]; fmt_hm((uint32_t)now, hm, sizeof(hm)); snprintf(n.foot, sizeof(n.foot), TRS("alle %s", "at %s"), hm); }
   } else if (g_tmNotice == TN_CYCLE) {
     n.col = C_OK; n.maxMs = 10UL * 60UL * 1000UL;
-    strcpy(n.legend, "pomodoro");
+    strcpy(n.legend, "pomodoro"); strcpy(n.ev, "cycle");
     strlcpy(n.top, TRS("ciclo completato", "cycle complete"), sizeof(n.top));
     n.big = POMO_CYCLE; strlcpy(n.unit, TRS(" pomodori", " pomodoros"), sizeof(n.unit));
     strlcpy(n.msg, TRS("ottimo lavoro: fai una pausa vera", "great work: take a real break"), sizeof(n.msg));
@@ -3727,14 +3753,14 @@ static void tm_show() {
   } else if (g_tmNotice == TN_BREAK) {
     n.col = C_OK;
     snprintf(n.legend, sizeof(n.legend), "pomodoro %d/%d", g_pomoN, POMO_CYCLE);
-    strlcpy(n.top, TRS("pausa!", "break time"), sizeof(n.top));
+    strlcpy(n.top, TRS("pausa!", "break time"), sizeof(n.top)); strcpy(n.ev, "break");
     n.big = g_tmLenS / 60; strcpy(n.unit, " min");
     strlcpy(n.msg, TRS("pomodoro fatto: alzati e respira", "pomodoro done: stand up and breathe"), sizeof(n.msg));
     snprintf(n.foot, sizeof(n.foot), TRS("oggi: %d %s", "today: %d %s"), today, pomo_word(today));
   } else {                                     // TN_FOCUS: fine pausa, riparte il focus
     n.col = C_ACCENT; n.hop = false;
     snprintf(n.legend, sizeof(n.legend), "pomodoro %d/%d", g_pomoN + 1, POMO_CYCLE);
-    strlcpy(n.top, TRS("si riparte", "back to focus"), sizeof(n.top));
+    strlcpy(n.top, TRS("si riparte", "back to focus"), sizeof(n.top)); strcpy(n.ev, "focus");
     n.big = g_tmLenS / 60; strcpy(n.unit, " min");
     strlcpy(n.msg, TRS("di concentrazione: una cosa sola", "of focus: one thing only"), sizeof(n.msg));
     snprintf(n.foot, sizeof(n.foot), TRS("oggi: %d %s", "today: %d %s"), today, pomo_word(today));
@@ -4208,6 +4234,11 @@ static void settings_action_cb(lv_event_t *e) {
       g_prefs.putBool("rstal", g_resetAlert);
       request_state(ST_SETTINGS);
       break;
+    case 24:                                           // suoni e notifiche sul pc
+      g_pcSound = !g_pcSound;
+      g_prefs.putBool("pcsnd", g_pcSound);
+      request_state(ST_SETTINGS);
+      break;
     case 23:                                           // avvisi claude code: sempre -> oltre 1 min -> oltre 5 min -> spento
       g_ccAlert = (g_ccAlert + 1) % 4;
       g_prefs.putInt("ccal", g_ccAlert);
@@ -4248,6 +4279,8 @@ static void ui_settings() {
          C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)15);
   static const char *CC_LBL_IT[4] = {"spento", "sempre", "oltre 1 min", "oltre 5 min"};
   static const char *CC_LBL_EN[4] = {"off", "always", "over 1 min", "over 5 min"};
+  kv_row(lst, TRS("suoni sul pc", "sounds on pc"), g_pcSound ? TRS("acceso", "on") : TRS("spento", "off"),
+         C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)24);
   kv_row(lst, TRS("avvisi claude code", "claude code alerts"), g_lang ? CC_LBL_EN[g_ccAlert] : CC_LBL_IT[g_ccAlert],
          C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)23);
   kv_row(lst, TRS("luminosità", "brightness"),    bri_label(),           C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)3, &g_briLbl);
@@ -4793,6 +4826,11 @@ static void extra_task(void *) {
       g_wxReq = false;
       g_wxDone = true;
     }
+    if (g_pcNtfReq) {
+      PcNotify n = g_pcNtf;
+      g_pcNtfReq = false;
+      if (g_wifi.isConnected()) postPcNotify(n.host, n.ev, n.title, n.msg);
+    }
     if (g_pcReq) {
       PcStats p = {};
       if (g_wifi.isConnected()) fetchPcStats(g_pcReqHost, p);
@@ -5179,6 +5217,17 @@ void loop() {
     // Momenti di soglia: mostra quello in sospeso e anima l'overlay attivo
     if (g_pendWin >= 0 && !g_mo.scrim && !g_refreshing && g_screenMode < 2) {
       show_moment(g_pendWin, g_pendThr);
+      char t[64], m[64];
+      const char *wn = g_pendWin ? TRS("7 giorni", "7-day") : TRS("5 ore", "5-hour");
+      if (g_pendThr) {
+        snprintf(t, sizeof(t), TRS("finestra %s al %d%%", "%s window at %d%%"), wn, g_pendThr);
+        strlcpy(m, g_pendThr >= 100 ? TRS("limite raggiunto: attendi il reset", "limit reached: wait for the reset")
+                                    : TRS("controlla il ritmo di utilizzo", "keep an eye on your usage pace"), sizeof(m));
+      } else {
+        snprintf(t, sizeof(t), TRS("finestra %s di nuovo disponibile", "%s window available again"), wn);
+        strlcpy(m, TRS("si riparte", "back to work"), sizeof(m));
+      }
+      pc_notify(g_pendThr ? "thr" : "reset", t, m);
       g_pendWin = -1;
     }
     if (g_mo.scrim) moment_tick();
