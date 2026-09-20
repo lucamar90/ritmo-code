@@ -3136,7 +3136,7 @@ static void cal_view_build() {
     snprintf(h, sizeof(h), "%s %d %s%s", (g_lang ? GG_EN : GG_IT)[tv.tm_wday], tv.tm_mday, (g_lang ? MM_EN : MM_IT)[tv.tm_mon],
              g_calSel == today ? TRS(" (oggi)", " (today)") : "");
     lv_label_set_text(title, h);
-    lv_obj_t *lst = tlist(s, 13, 88, 454, 226);
+    lv_obj_t *lst = tlist(s, 13, 84, 454, 230);
     int idx[24]; int n = cal_day_events(g_calSel, idx, 24);
     if (!n) tstatic(lst, outOfRange(g_calSel, g_calSel) ? TRS("fuori dal periodo scaricato", "outside the downloaded range")
                                                         : TRS("nessun evento", "no events"), F14, C_FAINT, 13, 10);
@@ -3156,28 +3156,36 @@ static void cal_view_build() {
     localtime_r(&mon, &a); localtime_r(&sun, &z);
     snprintf(h, sizeof(h), "%d %s - %d %s", a.tm_mday, (g_lang ? MM_EN : MM_IT)[a.tm_mon], z.tm_mday, (g_lang ? MM_EN : MM_IT)[z.tm_mon]);
     lv_label_set_text(title, h);
-    lv_obj_t *lst = tlist(s, 13, 88, 454, 226);
+    lv_obj_t *lst = tlist(s, 13, 84, 454, 230);
     if (outOfRange(mon, sun)) tstatic(lst, TRS("fuori dal periodo scaricato", "outside the downloaded range"), F12, C_FAINT, 13, 6);
+    // righe strette: i sette giorni devono entrare senza scorrere, i giorni pieni si aprono in basso
     for (int d = 0; d < 7; d++) {
       time_t day = day_add(mon, d);
       struct tm dv; localtime_r(&day, &dv);
       int idx[12]; int n = cal_day_events(day, idx, 12);
       char dh[32]; snprintf(dh, sizeof(dh), "%s %d", (g_lang ? GG_EN : GG_IT)[dv.tm_wday], dv.tm_mday);
       lv_obj_t *r = plain_obj(lst);
-      lv_obj_set_size(r, 454, 24);
-      tstatic(r, dh, F14, day == today ? C_ACCENT : C_MUTED, 13, 4);
-      if (!n) tstatic(r, "-", F12, C_FAINT, 90, 6);
-      for (int k = 0; k < n; k++) {
+      lv_obj_set_size(r, 454, 22);
+      tstatic(r, dh, F14, day == today ? C_ACCENT : C_MUTED, 13, 2);
+      if (!n) tstatic(r, "-", F12, C_FAINT, 90, 5);
+      int show = n > 3 ? 3 : n;                        // oltre tre eventi: gli altri sono contati in fondo
+      for (int k = 0; k < show; k++) {
         char t[80]; cal_ev_text(g_calAll[idx[k]], day, t, sizeof(t), true);
         lv_obj_t *l;
-        if (k == 0) l = tstatic(r, t, F12, g_calAll[idx[k]].allday ? C_BLUE : C_TEXT, 90, 6);
+        if (k == 0) l = tstatic(r, t, F12, g_calAll[idx[k]].allday ? C_BLUE : C_TEXT, 90, 5);
         else {
           lv_obj_t *r2 = plain_obj(lst);
-          lv_obj_set_size(r2, 454, 20);
-          l = tstatic(r2, t, F12, g_calAll[idx[k]].allday ? C_BLUE : C_TEXT, 90, 2);
+          lv_obj_set_size(r2, 454, 18);
+          l = tstatic(r2, t, F12, g_calAll[idx[k]].allday ? C_BLUE : C_TEXT, 90, 1);
         }
         lv_obj_set_width(l, 350);
         lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+      }
+      if (n > show) {
+        lv_obj_t *r2 = plain_obj(lst);
+        lv_obj_set_size(r2, 454, 18);
+        char t[32]; snprintf(t, sizeof(t), TRS("+%d altri", "+%d more"), n - show);
+        tstatic(r2, t, F12, C_FAINT, 90, 1);
       }
     }
   } else {                                                       // ---- mese

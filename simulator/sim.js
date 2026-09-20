@@ -1103,7 +1103,7 @@ function calViewBuild() {
   B(TRS('oggi', 'now'), 431, 50, 36, 30, () => { calSel = today; calMonthOfs = 0; }, C.ACCENT, C.BORDER, 12);
   const title = label(s, '', 14, C.TEXT, 58, 56); Object.assign(title.style, { width: '322px', textAlign: 'center' });
   const sel = new Date(calSel * 1000);
-  const list = () => { const l = obj(s, 13, 88, 454, 226, { display: 'flex', flexDirection: 'column' }); l.classList.add('scroll'); return l; };
+  const list = () => { const l = obj(s, 13, 84, 454, 230, { display: 'flex', flexDirection: 'column' }); l.classList.add('scroll'); return l; };
   if (calMode === 0) {
     title.textContent = `${GG[sel.getDay()]} ${sel.getDate()} ${MM[sel.getMonth()]}${calSel === today ? TRS(' (oggi)', ' (today)') : ''}`;
     const l = list(), evs = calDay(calSel);
@@ -1113,16 +1113,21 @@ function calViewBuild() {
     const mon = dayAdd(calSel, -((sel.getDay() + 6) % 7)), sun = dayAdd(mon, 6), a = new Date(mon * 1000), z = new Date(sun * 1000);
     title.textContent = `${a.getDate()} ${MM[a.getMonth()]} - ${z.getDate()} ${MM[z.getMonth()]}`;
     const l = list();
+    // righe strette: i sette giorni devono entrare senza scorrere, i giorni pieni si aprono in basso
     for (let d = 0; d < 7; d++) {
       const day = dayAdd(mon, d), dv = new Date(day * 1000), evs = calDay(day);
-      const r = obj(l, 0, 0, 454, 24, { position: 'relative', flex: '0 0 24px' });
-      label(r, `${GG[dv.getDay()]} ${dv.getDate()}`, 14, day === today ? C.ACCENT : C.MUTED, 13, 4);
-      if (!evs.length) label(r, '-', 12, C.FAINT, 90, 6);
-      evs.forEach((c, k) => {
-        const rr = k ? obj(l, 0, 0, 454, 20, { position: 'relative', flex: '0 0 20px' }) : r;
-        const t = label(rr, escapeHtml(calTxt(c, day, true)), 12, c.a ? C.BLUE : C.TEXT, 90, k ? 2 : 6);
+      const r = obj(l, 0, 0, 454, 22, { position: 'relative', flex: '0 0 22px' });
+      label(r, `${GG[dv.getDay()]} ${dv.getDate()}`, 14, day === today ? C.ACCENT : C.MUTED, 13, 2);
+      if (!evs.length) label(r, '-', 12, C.FAINT, 90, 5);
+      evs.slice(0, 3).forEach((c, k) => {
+        const rr = k ? obj(l, 0, 0, 454, 18, { position: 'relative', flex: '0 0 18px' }) : r;
+        const t = label(rr, escapeHtml(calTxt(c, day, true)), 12, c.a ? C.BLUE : C.TEXT, 90, k ? 1 : 5);
         Object.assign(t.style, { width: '350px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
       });
+      if (evs.length > 3) {
+        const rr = obj(l, 0, 0, 454, 18, { position: 'relative', flex: '0 0 18px' });
+        label(rr, TRS(`+${evs.length - 3} altri`, `+${evs.length - 3} more`), 12, C.FAINT, 90, 1);
+      }
     }
   } else {
     const first = new Date(sel.getFullYear(), sel.getMonth() + calMonthOfs, 1);
@@ -2286,7 +2291,7 @@ function initPanel() {
 }
 
 // accesso per tools/capture_screens.js (immagini del README)
-window.__sim = { API, G, ST, P, boot, requestState, setTile, refreshUiValues, dashTick, showMoment, momentClose, ccEvent, ccBusySet, calViewOpen, CAL, calShow, pauseSet, uiSettings, shadeOpen, shadeClose, alPush, noticeClose, tmMenuOpen, wxWeekOpen, tmStart, TM, TM_TIMER, TM_FOCUS, TM_BREAK, pauseMenuOpen, pauseMenuClose, nightClockShow, nightClockClose };
+window.__sim = { API, G, ST, P, boot, requestState, setTile, refreshUiValues, dashTick, showMoment, momentClose, ccEvent, ccBusySet, calViewOpen, CAL, CAL_ALL, calShow, pauseSet, uiSettings, shadeOpen, shadeClose, alPush, noticeClose, tmMenuOpen, wxWeekOpen, tmStart, TM, TM_TIMER, TM_FOCUS, TM_BREAK, pauseMenuOpen, pauseMenuClose, nightClockShow, nightClockClose };
 initPanel();
 applyBrightness();
 boot(true);
