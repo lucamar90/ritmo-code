@@ -9,7 +9,7 @@ Senza computer acceso, senza app, senza cloud.
 
 **Italiano** · [English](README.en.md)
 
-<img src="https://img.shields.io/badge/firmware-v3.9.8-D97757?style=for-the-badge" alt="firmware v3.9.8">
+<img src="https://img.shields.io/badge/firmware-v3.9.9-D97757?style=for-the-badge" alt="firmware v3.9.9">
 <img src="https://img.shields.io/badge/ESP32--S3-AXS15231B%20480×320-1B1A18?style=for-the-badge" alt="ESP32-S3 AXS15231B">
 <img src="https://img.shields.io/badge/LVGL-9.2.2-9BC08A?style=for-the-badge" alt="LVGL 9.2.2">
 <img src="https://img.shields.io/badge/account-fino%20a%204-8E8B82?style=for-the-badge" alt="fino a 4 account">

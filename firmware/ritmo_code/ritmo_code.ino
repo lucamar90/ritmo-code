@@ -5743,10 +5743,13 @@ static void extra_task(void *) {
     if (g_updCheckReq) {
       char tag[16], url[200];
       bool ok = false;
-      if (g_wifi.isConnected()) {
+      for (int try_ = 0; try_ < 2 && !ok && g_wifi.isConnected(); try_++) {
+        if (try_) vTaskDelay(pdMS_TO_TICKS(1500));       // un intoppo di rete o poca RAM: riprova una volta
         xSemaphoreTake(g_httpsLock, portMAX_DELAY);
         ok = fetchLatestRelease(tag, sizeof(tag), url, sizeof(url));
         xSemaphoreGive(g_httpsLock);
+        if (!ok) Serial.printf("[OTA] controllo fallito (tentativo %d), RAM interna libera %u KB\n",
+                               try_ + 1, (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024));
       }
       if (ok) {
         strlcpy(g_updTag, tag, sizeof(g_updTag));
