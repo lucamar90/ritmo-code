@@ -1817,10 +1817,13 @@ static String home_page(const String &msg, bool ok) {
                ".row{display:flex;gap:8px}.row button{margin-top:0;width:auto;padding:0 16px}"
                "</style></head><body><div class=card>"
                "<h1>" WEB_SPARK " Pagina home</h1>"
-               "<p>Citta' per il meteo (Open-Meteo, gratuito) e indirizzo del PC con Ritmo Code PC Monitor (lo imposta anche l'app stessa con &quot;Collega questo PC&quot;).</p>");
+               "<p>Le impostazioni che stanno sul dispositivo: meteo, PC, energia e calendario. "
+               "Avvisi, schermo e suoni sono in <i>Impostazioni</i> sul dispositivo.</p>"
+               "<style>h2{font-size:13px;color:var(--mut);text-transform:lowercase;margin:22px 0 0;"
+               "border-top:1px solid var(--bd);padding-top:14px;font-weight:500}h2:first-of-type{border:0;margin-top:8px}</style>");
   if (msg.length()) { h += ok ? "<div class='msg ok'>" : "<div class='msg err'>"; h += msg; h += "</div>"; }
   char num[24];
-  h += F("<form method=POST action='/home' id=f><label for=q>Citta'</label><div class=row>"
+  h += F("<form method=POST action='/home' id=f><h2 id=citta>home e meteo</h2><label for=q>Citta'</label><div class=row>"
          "<input id=q autocomplete=off value='");
   h += g_wxCity;
   h += F("'><button type=button id=s>Cerca</button></div><select id=r hidden></select>"
@@ -1830,20 +1833,20 @@ static String home_page(const String &msg, bool ok) {
   snprintf(num, sizeof(num), "%.4f", g_wxLat); h += num;
   h += F("'><input type=hidden name=lon id=lon value='");
   snprintf(num, sizeof(num), "%.4f", g_wxLon); h += num;
-  h += F("'><label for=pc>Indirizzo del PC (ip:porta, vuoto per nasconderlo)</label>"
-         "<input id=pc name=pc maxlength=47 autocomplete=off placeholder='192.168.1.10:8080' value='");
+  h += F("'><h2 id=pc>rete e pc</h2><label for=pcf>Indirizzo del PC (ip:porta, vuoto per nasconderlo)</label>"
+         "<input id=pcf name=pc maxlength=47 autocomplete=off placeholder='192.168.1.10:8080' value='");
   h += g_pcHost;
-  h += F("'><label for=kwh>Prezzo dell'energia (euro per kWh, per il costo del PC)</label>"
-         "<input id=kwh name=kwh inputmode=decimal maxlength=6 autocomplete=off value='");
+  h += F("'><label for=kwhf>Prezzo dell'energia (euro per kWh, per il costo del PC)</label>"
+         "<input id=kwhf name=kwh inputmode=decimal maxlength=6 autocomplete=off value='");
   snprintf(num, sizeof(num), "%.3f", g_kwhPrice); h += num;
-  h += F("'><label for=ical>Calendario: indirizzo segreto in formato iCal (Google Calendar: Impostazioni del calendario &rarr; "
-         "Integra il calendario &rarr; Indirizzo segreto in formato iCal)</label>"
+  h += F("'><h2 id=cal>calendario</h2><label for=ical>Indirizzo segreto in formato iCal (Google Calendar dal browser: Impostazioni &rarr; "
+         "il tuo calendario &rarr; Integra il calendario &rarr; <b>Indirizzo segreto in formato iCal</b>, non quello pubblico)</label>"
          "<input id=ical name=ical maxlength=250 autocomplete=off placeholder='");
   h += g_ical[0] ? F("impostato: lascia vuoto per non cambiarlo") : F("https://calendar.google.com/calendar/ical/.../basic.ics");
   h += F("'>");
   if (g_ical[0]) h += F("<label><input type=checkbox name=icaldel value=1 style='width:auto;margin-right:6px'>rimuovi il calendario</label>");
   h += F("<p style='font-size:12px;color:var(--mut)'>Il link lo legge solo il PC collegato (Ritmo Code PC Monitor), che scarica gli eventi ogni 5 minuti.</p>");
-  h += F("<label for=pin>PIN del dispositivo</label>"
+  h += F("<h2>salva</h2><label for=pin>PIN del dispositivo</label>"
          "<input id=pin name=pin type=password inputmode=numeric maxlength=4 autocomplete=off>"
          "<button type=submit>Salva</button></form><p><a href='/'>&larr; pannello</a></p>"
          "<script>var R=[];s.onclick=function(){fetch('https://geocoding-api.open-meteo.com/v1/search?count=5&language=it&name='+encodeURIComponent(q.value))"

@@ -49,6 +49,10 @@ td.r{text-align:right;white-space:nowrap}td.id{color:var(--fa);word-break:break-
 .spark{height:60px;margin-top:10px}
 .pre{white-space:pre;overflow-x:auto;color:var(--mu)}
 .foot{display:flex;flex-wrap:wrap;gap:8px 20px;font-size:13px;border-top:1px solid var(--bd);padding-top:12px}
+.menu{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;border-top:1px solid var(--bd);padding-top:14px;margin-top:6px}
+.mg{display:flex;flex-direction:column;gap:4px}
+.mt{font-size:12px;color:var(--mu);text-transform:lowercase}
+.mg a{font-size:13px}
 .err{color:var(--bad)}[hidden]{display:none!important}
 </style></head><body><main>
 <div class=hdr><b>&#10043; ritmo-code</b><span id=path>/home</span><span id=acct class=k></span><span class=st id=upd>connessione...</span></div>
@@ -104,7 +108,13 @@ td.r{text-align:right;white-space:nowrap}td.id{color:var(--fa);word-break:break-
  <div class=box style="margin-top:22px"><span class=lg>sistema</span><div id=sysv class=k>--</div></div>
 </section>
 
-<div class=foot><a href="/models">modifica ID modelli</a><a href="/home">citta', pc ed energia</a><a href="/update">aggiorna firmware</a><span id=fw class=f style="margin-left:auto"></span></div>
+<div class=menu>
+ <div class=mg><span class=mt>claude</span><a href="/models">modelli &middot; modifica ID</a></div>
+ <div class=mg><span class=mt>home e meteo</span><a href="/home#citta">citta' del meteo</a></div>
+ <div class=mg><span class=mt>calendario</span><a href="/home#cal">link iCal (segreto)</a></div>
+ <div class=mg><span class=mt>rete e pc</span><a href="/home#pc">indirizzo del pc</a><a href="/home#kwh">prezzo dell'energia</a></div>
+ <div class=mg><span class=mt>sistema</span><a href="/update">aggiorna firmware</a><span id=fw class=f></span></div>
+</div>
 </main>
 <script>
 var D=null,PC=null,off=0,NB=19,lastOk=0,failing=false;
