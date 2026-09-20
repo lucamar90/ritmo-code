@@ -28,7 +28,7 @@ import winreg
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP = "ritmo-code-pc-monitor"
-VERSION = "1.5.0"
+VERSION = "1.6.0"
 DEFAULT_PORT = 8765
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "RitmoCodePcMonitor")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
@@ -1139,7 +1139,7 @@ def _cal_title(t):
     """Titolo leggibile dal dispositivo: niente virgolette/escape, solo caratteri del suo font (Latin-1)."""
     t = t.replace('"', "'").replace("\\", "/")
     t = "".join(ch for ch in t if ch >= " " and ord(ch) <= 0xFF)
-    return t.strip()[:44] or "(senza titolo)"
+    return t.strip()[:60] or "(senza titolo)"
 
 
 class Calendar(threading.Thread):
@@ -1286,8 +1286,13 @@ class TrayIcon:
         d = self.sampler.snapshot()
         r = lambda v: "--" if v is None else f"{v:.0f}"
         lines = [f"Ritmo Code PC Monitor {VERSION}",
-                 f"cpu {r(d.get('cpu_load'))}% Â· gpu {r(d.get('gpu_load'))}% Â· ram {r(d.get('ram_load'))}%",
+                 f"cpu {r(d.get('cpu_load'))}% · gpu {r(d.get('gpu_load'))}% · ram {r(d.get('ram_load'))}%",
                  self._device_line()]
+        nxt = CAL.status().get("next")
+        if nxt:
+            when = time.strftime("%H:%M", time.localtime(nxt["start"]))
+            day = "" if time.strftime("%d", time.localtime(nxt["start"])) == time.strftime("%d") else time.strftime("%d/%m ", time.localtime(nxt["start"]))
+            lines.append(f"prossimo: {day}{when} {nxt['title'][:40]}")
         return "\n".join(lines)[:127]
 
     def _menu(self):

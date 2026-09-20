@@ -62,7 +62,7 @@ struct PcStats {
   int   ccBusy;            // sessioni al lavoro
   // prossimi eventi del calendario (letti dal PC Monitor dal link iCal); calN < 0 = calendario non impostato
   int   calN;
-  struct { uint32_t s, e; char title[48]; } cal[3];
+  struct { uint32_t s, e; char title[64]; } cal[3];
 };
 
 bool fetchWeather(float lat, float lon, WeatherData& out);
@@ -75,5 +75,5 @@ bool fetchLatestRelease(char* tag, size_t tagSz, char* url, size_t urlSz);
 bool installFromUrl(const char* url, void (*progress)(int pct), String& err);
 
 // eventi del calendario per le viste giorno/settimana/mese (GET http://<pc>/calendar.json)
-struct CalItem { uint32_t s, e; uint8_t allday; char title[45]; };
+struct CalItem { uint32_t s, e; uint8_t allday; char title[64]; };
 int fetchCalRange(const char* host, CalItem* out, int max);   // voci lette, -1 errore

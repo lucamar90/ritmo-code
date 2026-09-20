@@ -1193,6 +1193,11 @@ function homeTick() {
     const now = nowEpoch(), ev = CAL.find((e) => e.e > now);   // calendario: in corso o entro un'ora
     if (ev && ev.s <= now) setText(h.date, TRS(`in corso: ${escapeHtml(ev.t)} · fino ${fmtHm(ev.e)}`, `now: ${escapeHtml(ev.t)} · until ${fmtHm(ev.e)}`), C.OK);
     else if (ev && ev.s - now <= 3600) setText(h.date, TRS(`tra ${Math.ceil((ev.s - now) / 60)} min: ${escapeHtml(ev.t)}`, `in ${Math.ceil((ev.s - now) / 60)} min: ${escapeHtml(ev.t)}`), C.BLUE);
+    else if (ev) {                                            // piu' avanti: ora e titolo
+      const q = localParts(ev.s);
+      setText(h.date, q.d === p.d ? TRS(`oggi ${fmtHm(ev.s)}: ${escapeHtml(ev.t)}`, `today ${fmtHm(ev.s)}: ${escapeHtml(ev.t)}`)
+                                  : `${(P.lang ? GE : GI)[q.wd].slice(0, 3)} ${q.d}, ${fmtHm(ev.s)}: ${escapeHtml(ev.t)}`, C.FAINT);
+    }
     else setText(h.date, `${P.lang ? GE[p.wd] : GI[p.wd]} ${p.d} ${(P.lang ? ME : MI)[p.mo - 1]} · ${WX.city.toLowerCase()}`, C.MUTED);
   }
   setText(h.desc, `${wxDesc(WX.code)} ${WX.tmax}/${WX.tmin}°`);   // oggi; domani e' nelle previsioni della settimana
@@ -1214,7 +1219,7 @@ function homeRedraw() {
   const [w, wc] = statusWord(G.usage.statusOverall);
   setText(h.row[0].right, `${TRS('stato', 'status')} ${w}`, wc);
   const ok = [0, 1, 2, 3].filter((i) => modelMood(i) === 1).length;
-  if (P.pause) setText(h.row[1].right, TRS(`richieste <span style="color:${C.WARN}">in pausa</span>`, `requests <span style="color:${C.WARN}">paused</span>`), C.MUTED);
+  if (P.pause) setText(h.row[1].right, `<span style="color:${C.WARN}">${TRS('in pausa', 'paused')}</span>`, C.MUTED);
   else setText(h.row[1].right, TRS(`modelli ${ok}/4 ok`, `models ${ok}/4 ok`), ok === 4 ? C.MUTED : C.WARN);
   h.pcBox._lg.textContent = `pc · ${PC.host}`;
   const k = (s) => `<span style="color:${C.MUTED};font-size:12px">${s}</span>`;

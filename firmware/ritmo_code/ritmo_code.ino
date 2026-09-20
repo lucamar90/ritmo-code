@@ -433,7 +433,7 @@ static void cc_event(long id, const char *ev, const char *proj, int dur, int age
 static int g_setGroup = 0;
 // calendario: link iCal (NVS "ical", segreto: lo legge solo il PC collegato) e prossimi eventi dal PC Monitor
 static char g_ical[256] = "";
-struct CalEv { uint32_t s, e; char title[48]; };
+struct CalEv { uint32_t s, e; char title[64]; };
 static CalEv g_cal[3];
 static int g_calN = 0;
 static int g_calAlIdx = 1;                   // avviso calendario: 0 spento, 1/2/3 = 5/10/15 min prima (NVS "calal")
@@ -3124,13 +3124,22 @@ static void cal_view_build() {
   lv_obj_set_width(title, 322);
   lv_obj_set_style_text_align(title, LV_TEXT_ALIGN_CENTER, 0);
 
+  // il PC manda dal primo del mese a sei settimane: oltre non ci sono dati
+  time_t rgA = 0, rgB = 0;
+  {
+    struct tm m0; localtime_r(&now, &m0);
+    m0.tm_mday = 1; m0.tm_hour = 0; m0.tm_min = 0; m0.tm_sec = 0; m0.tm_isdst = -1;
+    rgA = mktime(&m0); rgB = now + 42 * 86400;
+  }
+  auto outOfRange = [&](time_t a, time_t z) { return z < rgA || a > rgB; };
   if (g_calMode == 0) {                                          // ---- giorno
     snprintf(h, sizeof(h), "%s %d %s%s", (g_lang ? GG_EN : GG_IT)[tv.tm_wday], tv.tm_mday, (g_lang ? MM_EN : MM_IT)[tv.tm_mon],
              g_calSel == today ? TRS(" (oggi)", " (today)") : "");
     lv_label_set_text(title, h);
     lv_obj_t *lst = tlist(s, 13, 88, 454, 226);
     int idx[24]; int n = cal_day_events(g_calSel, idx, 24);
-    if (!n) tstatic(lst, TRS("nessun evento", "no events"), F14, C_FAINT, 13, 10);
+    if (!n) tstatic(lst, outOfRange(g_calSel, g_calSel) ? TRS("fuori dal periodo scaricato", "outside the downloaded range")
+                                                        : TRS("nessun evento", "no events"), F14, C_FAINT, 13, 10);
     for (int k = 0; k < n; k++) {
       const CalItem &c = g_calAll[idx[k]];
       char t[80]; cal_ev_text(c, g_calSel, t, sizeof(t), false);
@@ -3148,6 +3157,7 @@ static void cal_view_build() {
     snprintf(h, sizeof(h), "%d %s - %d %s", a.tm_mday, (g_lang ? MM_EN : MM_IT)[a.tm_mon], z.tm_mday, (g_lang ? MM_EN : MM_IT)[z.tm_mon]);
     lv_label_set_text(title, h);
     lv_obj_t *lst = tlist(s, 13, 88, 454, 226);
+    if (outOfRange(mon, sun)) tstatic(lst, TRS("fuori dal periodo scaricato", "outside the downloaded range"), F12, C_FAINT, 13, 6);
     for (int d = 0; d < 7; d++) {
       time_t day = day_add(mon, d);
       struct tm dv; localtime_r(&day, &dv);
@@ -3179,6 +3189,8 @@ static void cal_view_build() {
     lv_label_set_text(title, h);
     for (int c = 0; c < 7; c++)                                  // intestazione lun..dom
       tstatic(s, (g_lang ? GG_EN : GG_IT)[(c + 1) % 7], F12, C_FAINT, 30 + c * 62 + 16, 88);
+    if (outOfRange(day_start(first), day_add(day_start(first), 31)))
+      tstatic(s, TRS("fuori dal periodo scaricato", "outside the downloaded range"), F12, C_FAINT, 30, 300);
     int lead = (mv.tm_wday + 6) % 7;
     static const uint8_t DAYS[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
     int y = mv.tm_year + 1900;
@@ -3300,7 +3312,6 @@ static void build_tile_home(lv_obj_t *t) {
     lv_obj_set_style_text_align(g_ui.hmRight[i], LV_TEXT_ALIGN_RIGHT, 0);
   }
   g_ui.hmPauseRow = trow(b, 0, 0);                  // allineata a destra come hmRight (bordo a x 441)
-  mklabel(g_ui.hmPauseRow, TRS("richieste ", "requests "), F12, C_MUTED);
   mklabel(g_ui.hmPauseRow, TRS("in pausa", "paused"), F12, C_WARN);
   lv_obj_align(g_ui.hmPauseRow, LV_ALIGN_TOP_RIGHT, -(454 - 2 - 441), 13 + 30 + 2);
   lv_obj_add_flag(g_ui.hmPauseRow, LV_OBJ_FLAG_HIDDEN);
@@ -3354,6 +3365,13 @@ static void home_tick() {
     } else if (ci >= 0 && g_cal[ci].s - (uint32_t)now <= 3600) {   // entro un'ora
       snprintf(s, sizeof(s), TRS("tra %u min: %s", "in %u min: %s"), (unsigned)((g_cal[ci].s - (uint32_t)now + 59) / 60), g_cal[ci].title);
       calCol = C_BLUE;
+    } else if (ci >= 0) {                                          // piu' avanti: ora e titolo
+      char hm[12]; fmt_hm(g_cal[ci].s, hm, sizeof(hm));
+      struct tm ev; time_t es = g_cal[ci].s; localtime_r(&es, &ev);
+      if (ev.tm_mday == tv.tm_mday) snprintf(s, sizeof(s), TRS("oggi %s: %.36s", "today %s: %.36s"), hm, g_cal[ci].title);
+      else                          snprintf(s, sizeof(s), "%.3s %d, %s: %.30s",
+                                             (g_lang ? GEN : GIT)[ev.tm_wday], ev.tm_mday, hm, g_cal[ci].title);
+      calCol = C_FAINT;
     }
   }
   label_set(g_ui.hmDate, s);
@@ -4310,6 +4328,35 @@ static uint32_t tm_left_s() {
   int32_t l = (int32_t)(g_tmEndMs - millis());
   return l > 0 ? (uint32_t)(l + 999) / 1000 : 0;
 }
+// fase in corso salvata in NVS: dopo un riavvio riprende da dov'era
+static void tm_save() {
+  time_t now = time(nullptr);
+  uint32_t endEpoch = 0;
+  if (g_tmMode && now > 1000000000L) endEpoch = (uint32_t)now + tm_left_s();
+  g_prefs.putInt("tmmode", g_tmMode);
+  g_prefs.putUInt("tmend", endEpoch);
+  g_prefs.putUInt("tmlen", g_tmLenS);
+  g_prefs.putInt("tmn", g_pomoN);
+  g_prefs.putInt("tmpre", g_pomoPre);
+}
+static void tm_restore() {
+  static bool done = false;
+  if (done) return;
+  time_t now = time(nullptr);
+  if (now < 1000000000L) return;                    // aspetta l'orologio (NTP)
+  done = true;
+  int mode = g_prefs.getInt("tmmode", 0);
+  uint32_t end = g_prefs.getUInt("tmend", 0);
+  if (!mode || end <= (uint32_t)now + 2) { if (mode) tm_save(); return; }
+  g_tmMode = mode;
+  g_tmLenS = g_prefs.getUInt("tmlen", 0);
+  g_pomoN = g_prefs.getInt("tmn", 0);
+  g_pomoPre = g_prefs.getInt("tmpre", 0);
+  if (g_pomoPre < 0 || g_pomoPre > 2) g_pomoPre = 0;
+  g_tmEndMs = millis() + (end - (uint32_t)now) * 1000UL;
+  Serial.printf("[TIMER] ripreso dopo il riavvio: %u s\n", (unsigned)(end - (uint32_t)now));
+  tm_changed();
+}
 static void tm_start(int mode, uint32_t secs) {
   g_tmMode = mode; g_tmLenS = secs;
   g_tmEndMs = millis() + secs * 1000UL;
@@ -4368,7 +4415,7 @@ static void tm_show() {
   notice_show(n);
 }
 
-static void tm_changed() { set_hdr_status(); home_tick(); }
+static void tm_changed() { set_hdr_status(); home_tick(); tm_save(); }
 
 // fine della fase (ogni giro del loop, in qualsiasi schermata): avviso e fase successiva
 static void tm_tick() {
@@ -6120,9 +6167,20 @@ void loop() {
     uint32_t now = millis();
     static uint32_t lastTick = 0, lastBar = 0, lastBob = 0, blinkAt = 0;
     static bool blinkClosed = false;
+    // schermo: l'ora si sposta di 2 px ogni 10 min e ogni 30 min si ridisegna tutto (ritenzione dell'immagine)
+    static uint32_t lastShift = 0;
+    if (g_ui.hmTime && now - lastShift > 600000UL) {
+      lastShift = now;
+      static int k = 0;
+      const int dx[4] = {0, 2, 0, -2}, dy[4] = {0, 1, 2, 1};
+      k = (k + 1) % 4;
+      lv_obj_set_pos(g_ui.hmTime, 7 + dx[k], 7 + dy[k]);
+      if ((k % 2) == 0) lv_obj_invalidate(lv_screen_active());
+    }
     if (now - lastTick > 1000) {
       lastTick = now; dash_tick(); home_tick(); if (g_tmMode) set_hdr_status();
       cal_tick();
+      tm_restore();
       if (g_shadeTm) { char tt[12]; shade_timer_text(tt, sizeof(tt)); label_set(g_shadeTm, tt); }
       if (g_ccBusyN && (!g_pcAtMs || now - g_pcAtMs > pc_stale_ms())) { g_ccBusyN = 0; cc_busy_ui(); }
     }
