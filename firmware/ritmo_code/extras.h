@@ -60,6 +60,7 @@ struct PcStats {
   char  ccProj[28];
   int   ccDur, ccAge;      // secondi (ccDur -1 = sconosciuta)
   int   ccBusy;            // sessioni al lavoro
+  int   actMin;            // minuti di uso continuo del PC (-1 = PC Monitor vecchio)
   // prossimi eventi del calendario (letti dal PC Monitor dal link iCal); calN < 0 = calendario non impostato
   int   calN;
   struct { uint32_t s, e; char title[64]; } cal[3];

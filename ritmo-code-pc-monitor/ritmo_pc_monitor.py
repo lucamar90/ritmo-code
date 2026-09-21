@@ -28,7 +28,7 @@ import winreg
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP = "ritmo-code-pc-monitor"
-VERSION = "1.6.0"
+VERSION = "1.7.0"
 DEFAULT_PORT = 8765
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "RitmoCodePcMonitor")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
@@ -336,12 +336,42 @@ class LibreHardwareMonitor:
 # Campionamento in background
 # ---------------------------------------------------------------------------
 
+class _LastInput(ctypes.Structure):
+    _fields_ = [("cbSize", wt.UINT), ("dwTime", wt.DWORD)]
+
+
+def idle_seconds():
+    """Secondi dall'ultimo input di mouse o tastiera in questa sessione (anche da desktop remoto)."""
+    info = _LastInput(ctypes.sizeof(_LastInput), 0)
+    if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
+        return 0.0
+    return ((ctypes.windll.kernel32.GetTickCount() - info.dwTime) & 0xFFFFFFFF) / 1000.0
+
+
+class Activity:
+    """Minuti di uso continuo del PC: si azzerano dopo BREAK_S secondi senza mouse e tastiera."""
+
+    BREAK_S = 300
+
+    def __init__(self):
+        self.start = None
+
+    def update(self):
+        now, idle = time.time(), idle_seconds()
+        if idle >= self.BREAK_S:
+            self.start = None
+        elif self.start is None:
+            self.start = now - idle
+        return {"idle_s": int(idle), "act_min": 0 if self.start is None else int((now - self.start) // 60)}
+
+
 class Sampler(threading.Thread):
     def __init__(self, windows, lhm, interval):
         super().__init__(daemon=True)
         self.windows, self.lhm, self.interval = windows, lhm, interval
         self.lock = threading.Lock()
         self.data = {}
+        self.activity = Activity()
 
     def run(self):
         while True:
@@ -353,6 +383,10 @@ class Sampler(threading.Thread):
                 print(f"[sensori] errore: {error}")
             if self.lhm:
                 data.update(self.lhm.read())
+            try:
+                data.update(self.activity.update())       # promemoria pausa del dispositivo
+            except Exception as error:
+                print(f"[attivita'] errore: {error}")
             with self.lock:
                 self.data = data
             time.sleep(max(0.1, self.interval - (time.monotonic() - started)))

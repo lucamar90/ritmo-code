@@ -9,7 +9,7 @@ Senza computer acceso, senza app, senza cloud.
 
 **Italiano** · [English](README.en.md)
 
-<img src="https://img.shields.io/badge/firmware-v3.9.9-D97757?style=for-the-badge" alt="firmware v3.9.9">
+<img src="https://img.shields.io/badge/firmware-v3.9.10-D97757?style=for-the-badge" alt="firmware v3.9.10">
 <img src="https://img.shields.io/badge/ESP32--S3-AXS15231B%20480×320-1B1A18?style=for-the-badge" alt="ESP32-S3 AXS15231B">
 <img src="https://img.shields.io/badge/LVGL-9.2.2-9BC08A?style=for-the-badge" alt="LVGL 9.2.2">
 <img src="https://img.shields.io/badge/account-fino%20a%204-8E8B82?style=for-the-badge" alt="fino a 4 account">
@@ -84,6 +84,9 @@ nessuna richiesta in più ad Anthropic, e il token non viene mai esposto.
 - **Modalità notte** in una fascia oraria (22, 23 o 00 → 07): **orologio a tutto schermo** con luminosità tenue o molto tenue, oppure schermo spento, e di predefinito **aggiornamenti in pausa**. Il primo tocco riaccende soltanto, senza premere nulla. **Attenuazione** dopo 1, 5 o 10 minuti senza tocchi.
 - **Luminosità automatica**: piena di giorno e bassa la sera, dal tramonto all'alba (orari presi dal meteo) oppure 20→07 o 21→07. Un tocco sul livello vale fino al passaggio successivo.
 - **Pausa richieste** dal tasto in testata, senza limite o a tempo; riparte da sola.
+- **Tendina** (trascina giù dalla testata): segnale Wi-Fi, indirizzo e PC collegato (tocca per la pagina rete), **quattro tasti a scelta** fra richieste, timer, luce, suoni sul PC, aggiorna, calendario e meteo (*Impostazioni → schermo → tendina*), il **riepilogo di oggi** (pomodori, richieste a Claude e tempo di lavoro, 5 ore), il **prossimo evento** (tocca per aprire il calendario su quel giorno) e gli ultimi tre avvisi.
+- **Promemoria pausa**: dopo 45, 60 o 90 minuti di PC in uso senza staccare (mouse e tastiera, letti dal PC Monitor) Clawd ti ricorda di alzarti; si ripete ogni mezz'ora e si azzera dopo 5 minuti lontano dal PC (*Impostazioni → avvisi*).
+- **Claude oggi**: richieste finite, tempo totale di lavoro e la più lunga, nella tendina e nella pagina ritmo (scheda claude, periodo *oggi*).
 - **Home e meteo**: ora, data e previsioni per la città scelta (Open-Meteo, gratuito e senza chiave), aggiornate ogni 30 minuti. Tocca il meteo per le **previsioni dei 7 giorni**.
 - **Statistiche del PC** tramite l'app [Ritmo Code PC Monitor](#ritmo-code-pc-monitor), lette ogni 1, 3, 5 secondi o 1 minuto.
 - **Fino a 4 account**, cifrati con lo stesso PIN: viene interrogato solo quello attivo.

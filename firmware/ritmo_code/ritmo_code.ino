@@ -261,6 +261,16 @@ static int g_briIdx = 1;
 // luminosita' automatica: piena di giorno, bassa la sera (NVS "autobri")
 // 0 spento, 1 col sole (tramonto-alba dal meteo, altrimenti 20-07), 2 20:00-07:00, 3 21:00-07:00
 static int g_autoBri = 0;
+// promemoria pausa (NVS "brk"): dopo N minuti di PC in uso senza staccare (dal PC Monitor)
+static int g_brkIdx = 0;
+static const uint8_t BRK_MIN[4] = {0, 45, 60, 90};
+// tasti della tendina (NVS "shbtn"): un bit per tasto, al massimo quattro
+enum { SHB_PAUSE = 0, SHB_TIMER, SHB_LIGHT, SHB_SOUND, SHB_REFRESH, SHB_CAL, SHB_WX, SHB_N };
+static uint8_t g_shBtn = 0x0F;
+// Claude oggi (NVS "ccd" giorno, "ccn" richieste finite, "cct" secondi di lavoro, "ccx" la piu' lunga)
+static long g_ccDay = 0;
+static int  g_ccN = 0;
+static uint32_t g_ccT = 0, g_ccX = 0;
 
 static uint32_t g_lastPollMs = 0;         // millis dell'ultimo poll (per la barra di refresh)
 static int g_pollSec = DEFAULT_POLL_SEC;  // intervallo di aggiornamento (config, NVS)
@@ -888,6 +898,14 @@ static void load_persisted() {
   g_briIdx = g_prefs.getInt("bri", 1);
   g_autoBri = g_prefs.getInt("autobri", 0);
   if (g_autoBri < 0 || g_autoBri > 3) g_autoBri = 0;
+  g_brkIdx = g_prefs.getInt("brk", 0);
+  if (g_brkIdx < 0 || g_brkIdx > 3) g_brkIdx = 0;
+  g_shBtn = (uint8_t)g_prefs.getUInt("shbtn", 0x0F);
+  if (!g_shBtn || g_shBtn >= (1 << SHB_N)) g_shBtn = 0x0F;
+  g_ccDay = g_prefs.getLong("ccd", 0);
+  g_ccN = g_prefs.getInt("ccn", 0);
+  g_ccT = g_prefs.getUInt("cct", 0);
+  g_ccX = g_prefs.getUInt("ccx", 0);
   if (g_briIdx < 0 || g_briIdx > 2) g_briIdx = 1;
   g_pollSec = g_prefs.getInt("poll", DEFAULT_POLL_SEC);
   if (g_pollSec < MIN_POLL_SEC || g_pollSec > MAX_POLL_SEC) g_pollSec = DEFAULT_POLL_SEC;
@@ -3884,7 +3902,16 @@ static void heat_redraw() {
                tot == 1 ? "pomodoro" : TRS("pomodori", "pomodoros"), g_lang ? PER_EN[g_heatMode] : PER_IT[g_heatMode]);
       label_set(g_ui.heatCap, c);
     } else {
-      label_set(g_ui.heatCap, TRS("quota 5h consumata per ora locale", "5h quota burned per local hour"));
+      cc_stat_roll();
+      if (g_heatMode == 0 && g_ccN) {
+        char c[96], t[12], x[12];
+        dur_short(g_ccT, t, sizeof(t)); dur_short(g_ccX, x, sizeof(x));
+        snprintf(c, sizeof(c), TRS("quota 5h per ora " U_MIDDOT " oggi %d richieste, %s (max %s)",
+                                   "5h quota per hour " U_MIDDOT " today %d requests, %s (max %s)"), g_ccN, t, x);
+        label_set(g_ui.heatCap, c);
+      } else {
+        label_set(g_ui.heatCap, TRS("quota 5h consumata per ora locale", "5h quota burned per local hour"));
+      }
     }
   }
   float mx = 1.0f;
@@ -4113,7 +4140,7 @@ static void moment_tick() {
 // Avviso a schermo intero con Clawd: Claude Code, timer e pomodoro.
 // Resta finche' non lo tocchi (o scade), sopravvive ai rebuild del dashboard.
 // ============================================================
-enum { NT_NONE = 0, NT_CLAUDE, NT_TIMER, NT_CAL };
+enum { NT_NONE = 0, NT_CLAUDE, NT_TIMER, NT_CAL, NT_BRK };
 struct NoticeUI { lv_obj_t *scrim, *box, *frame, *ask; uint32_t t0, col, maxMs; int kind; bool hop, idle; };
 static NoticeUI g_nt = {};
 static int g_ntPend = NT_NONE;                 // avviso da mostrare appena si puo'
@@ -4255,11 +4282,13 @@ static const uint16_t CC_MIN_S[4] = {0, 0, 60, 300};   // durata minima del lavo
 static long g_ccSeen = 0;                      // id dell'ultimo evento gia' visto (crescono sempre)
 static int  g_ccDur = -1;
 
+static void cc_stat_add(int dur);
 static void cc_event(long id, const char *ev, const char *proj, int dur, int age) {
   if (id <= g_ccSeen) return;                  // gia' visto (arriva sia dal POST sia da data.json)
   g_ccSeen = id;
   if (age > 120) return;                       // vecchio: letto all'avvio o dopo che il pc non rispondeva
   Serial.printf("[CLAUDE] %s %s (%d s)\n", ev, proj, dur);
+  if (!strcmp(ev, "done") && dur >= 0) cc_stat_add(dur);   // contatori di oggi, anche senza avviso
   if (!strcmp(ev, "busy")) {                   // sei tornato a scrivere a Claude
     if (g_ntPend == NT_CLAUDE) g_ntPend = NT_NONE;
     if (g_nt.kind == NT_CLAUDE) notice_close();
@@ -4340,6 +4369,34 @@ static void cal_tick() {
   Serial.printf("[CAL] avviso: %s\n", g_cal[i].title);
 }
 
+// ---- Promemoria pausa: il PC Monitor conta i minuti di uso continuo (si azzera dopo 5 min lontano) ----
+static int g_brkNext = 0, g_brkMin = 0;
+static void brk_show() {
+  NoticeText n = {};
+  n.kind = NT_BRK; n.col = C_OK; n.hop = true; n.maxMs = 5UL * 60UL * 1000UL;
+  strcpy(n.ev, "break");
+  strlcpy(n.legend, TRS("promemoria pausa", "break reminder"), sizeof(n.legend));
+  strlcpy(n.top, TRS("sei al pc da", "at the pc for"), sizeof(n.top));
+  n.big = g_brkMin; strcpy(n.unit, " min");
+  strlcpy(n.msg, TRS("alzati, sgranchisciti e bevi un po' d'acqua", "stand up, stretch and drink some water"), sizeof(n.msg));
+  strlcpy(n.foot, TRS("si azzera con 5 min lontano dal pc", "resets after 5 min away"), sizeof(n.foot));
+  notice_show(n);
+}
+static void brk_tick() {
+  if (!g_brkIdx) { g_brkNext = 0; return; }
+  bool pcOk = g_pc.ok && g_pcAtMs && millis() - g_pcAtMs <= pc_stale_ms();
+  if (!pcOk || g_pc.actMin < 0) return;
+  int thr = BRK_MIN[g_brkIdx];
+  if (g_pc.actMin < thr) { g_brkNext = thr; return; }          // hai staccato: si riparte da capo
+  if (!g_brkNext) g_brkNext = thr;
+  if (g_pc.actMin < g_brkNext) return;
+  if (night_active() || g_tmMode == TM_BREAK || g_ntPend || g_nt.scrim) return;   // riprova al secondo dopo
+  g_brkMin = g_pc.actMin;
+  g_brkNext = g_pc.actMin + 30;                                  // se continui, di nuovo tra mezz'ora
+  g_ntPend = NT_BRK; g_ntT0 = 0;
+  Serial.printf("[PAUSA] promemoria: pc in uso da %d min\n", g_brkMin);
+}
+
 // ---- Timer e pomodoro (tocca l'ora nella home) ----
 // Pomodoro: 25 min di focus e 5 di pausa, pausa lunga di 15 dopo il quarto, poi si ferma.
 enum { TN_TIMER = 1, TN_BREAK, TN_FOCUS, TN_CYCLE };
@@ -4360,6 +4417,28 @@ static void pomo_count() {
   if (d && d != g_pomoDay) { g_pomoDay = d; g_pomoToday = 0; g_prefs.putLong("pomday", d); }
   g_pomoToday++;
   g_prefs.putInt("pomn", g_pomoToday);
+}
+// ---- Claude oggi: richieste finite, tempo di lavoro, la piu' lunga ----
+static void heat_redraw();
+static void cc_stat_roll() {
+  long d = local_day();
+  if (d && d != g_ccDay) { g_ccDay = d; g_ccN = 0; g_ccT = 0; g_ccX = 0; }
+}
+static void cc_stat_add(int dur) {
+  if (!local_day()) return;
+  cc_stat_roll();
+  g_ccN++;
+  g_ccT += (uint32_t)dur;
+  if ((uint32_t)dur > g_ccX) g_ccX = (uint32_t)dur;
+  g_prefs.putLong("ccd", g_ccDay); g_prefs.putInt("ccn", g_ccN);
+  g_prefs.putUInt("cct", g_ccT); g_prefs.putUInt("ccx", g_ccX);
+  heat_redraw();
+}
+// "45s", "12m", "1h05"
+static void dur_short(uint32_t s, char *out, size_t sz) {
+  if (s < 60) snprintf(out, sz, "%us", (unsigned)s);
+  else if (s < 3600) snprintf(out, sz, "%um", (unsigned)(s / 60));
+  else snprintf(out, sz, "%uh%02u", (unsigned)(s / 3600), (unsigned)(s / 60 % 60));
 }
 static const char *pomo_word(int n) {
   return n == 1 ? "pomodoro" : TRS("pomodori", "pomodoros");
@@ -4725,8 +4804,8 @@ static void al_line(int i, char *out, size_t sz, uint32_t *col) {
 static lv_obj_t *g_shadePanel = nullptr, *g_shadeTm = nullptr;   // g_shadeTm: tempo del timer, aggiornato ogni secondo
 static void shade_close() { if (g_shade) { lv_obj_delete(g_shade); g_shade = nullptr; g_shadePanel = nullptr; g_shadeTm = nullptr; } }
 // pulsante del pannello: nome sopra, stato sotto (nel colore dello stato)
-static lv_obj_t *shade_btn(lv_obj_t *p, int x, const char *name, const char *state, uint32_t stCol, lv_event_cb_t cb, void *ud) {
-  lv_obj_t *b = tbtn(p, x, 12, 104, 44, "", F12, C_TEXT, C_BORDER, cb, ud);
+static lv_obj_t *shade_btn(lv_obj_t *p, int x, int y, const char *name, const char *state, uint32_t stCol, lv_event_cb_t cb, void *ud) {
+  lv_obj_t *b = tbtn(p, x, y, 104, 44, "", F12, C_TEXT, C_BORDER, cb, ud);
   lv_obj_t *n = lv_obj_get_child(b, 0);
   lv_label_set_text(n, name);
   lv_obj_set_style_text_font(n, F14, 0);
@@ -4740,6 +4819,19 @@ static void shade_timer_text(char *out, size_t sz) {
   uint32_t l = tm_left_s();
   snprintf(out, sz, "%02u:%02u", (unsigned)(l / 60), (unsigned)(l % 60));
 }
+static int shade_btn_count() { int n = 0; for (int i = 0; i < SHB_N; i++) n += (g_shBtn >> i) & 1; return n; }
+static const char *shade_btn_name(int k) {
+  switch (k) {
+    case SHB_PAUSE:   return TRS("richieste", "requests");
+    case SHB_TIMER:   return "timer";
+    case SHB_LIGHT:   return TRS("luce", "light");
+    case SHB_SOUND:   return TRS("suoni pc", "pc sound");
+    case SHB_REFRESH: return TRS("aggiorna", "refresh");
+    case SHB_CAL:     return TRS("calendario", "calendar");
+    default:          return TRS("meteo", "weather");
+  }
+}
+static void open_settings_group(int g);
 static void shade_open(bool anim);
 static void shade_cb(lv_event_t *e) {
   int a = (int)(intptr_t)lv_event_get_user_data(e);
@@ -4750,8 +4842,50 @@ static void shade_cb(lv_event_t *e) {
     case 2: shade_close(); tm_menu_open(nullptr); return;
     case 3: g_briIdx = (g_briIdx + 1) % 3; g_prefs.putInt("bri", g_briIdx); apply_brightness(); break;
     case 4: g_pcSound = !g_pcSound; g_prefs.putBool("pcsnd", g_pcSound); break;
+    case 5:                                                    // aggiorna: limiti, meteo, pc e calendario
+      g_wantRefresh = true;
+      if (!g_wxReq && !g_wxDone && g_wifi.isConnected() && g_wxLat != 0) { g_wxTryMs = millis(); g_wxReq = true; }
+      g_pcTryMs = 0;
+      if (g_ical[0] && g_pcHost[0] && !g_calAllReq) g_calAllReq = true;
+      shade_close(); return;
+    case 6: shade_close(); cal_view_open(nullptr); return;
+    case 7: shade_close(); wx_week_open(nullptr); return;
+    case 8: shade_close(); open_settings_group(4); return;      // rete e pc
+    case 9: {                                                  // prossimo evento: il calendario su quel giorno
+      time_t now = time(nullptr);
+      int ci = now > 1000000000L ? cal_next((uint32_t)now) : -1;
+      shade_close();
+      cal_view_open(nullptr);
+      if (ci >= 0) { g_calSel = day_start((time_t)g_cal[ci].s); g_calMode = 0; cal_view_build(); }
+      return;
+    }
   }
   shade_open(false);                                           // ridisegna con i nuovi valori
+}
+// riga di stato: tacche del wifi, dBm, indirizzo, PC collegato
+static void shade_status_row(lv_obj_t *p) {
+  lv_obj_t *r = plain_obj(p);
+  lv_obj_set_pos(r, 12, 6);
+  lv_obj_set_size(r, 456, 22);
+  lv_obj_add_flag(r, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_bg_color(r, lv_color_hex(C_SURFACE), LV_STATE_PRESSED);
+  lv_obj_set_style_bg_opa(r, LV_OPA_COVER, LV_STATE_PRESSED);
+  lv_obj_add_event_cb(r, shade_cb, LV_EVENT_CLICKED, (void *)(intptr_t)8);
+  bool on = g_wifi.isConnected();
+  int rssi = on ? (int)WiFi.RSSI() : -100;
+  int bars = !on ? 0 : rssi > -55 ? 4 : rssi > -65 ? 3 : rssi > -75 ? 2 : 1;
+  uint32_t bc = bars >= 3 ? C_OK : bars == 2 ? C_WARN : C_BAD;
+  for (int i = 0; i < 4; i++) rrect(r, 8 + i * 5, 15 - (i + 1) * 3, 3, (i + 1) * 3, 0, i < bars ? bc : C_BORDER);
+  char t[80];
+  if (on) snprintf(t, sizeof(t), "%d dBm " U_MIDDOT " %s", rssi, WiFi.localIP().toString().c_str());
+  else    strlcpy(t, TRS("wifi non collegato", "wifi not connected"), sizeof(t));
+  tstatic(r, t, F12, on ? C_TEXT : C_BAD, 36, 4);
+  bool pcOk = g_pc.ok && g_pcAtMs && millis() - g_pcAtMs <= pc_stale_ms();
+  const char *pc = !g_pcHost[0] ? TRS("pc non impostato", "no pc set") : pcOk ? TRS("pc collegato", "pc connected") : TRS("pc spento", "pc off");
+  lv_obj_t *l = tstatic(r, pc, F12, pcOk ? C_OK : C_MUTED, 0, 4);
+  lv_obj_set_width(l, 200);
+  lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_RIGHT, 0);
+  lv_obj_set_x(l, 248);
 }
 static void shade_open(bool anim) {
   shade_close();
@@ -4764,7 +4898,7 @@ static void shade_open(bool anim) {
   lv_obj_add_event_cb(s, shade_cb, LV_EVENT_CLICKED, (void *)(intptr_t)-1);
   lv_obj_t *p = plain_obj(s);
   g_shadePanel = p;
-  const int H = 262;
+  const int H = 272;
   lv_obj_set_size(p, 480, H);
   lv_obj_set_pos(p, 0, 0);
   lv_obj_set_style_bg_color(p, lv_color_hex(C_BG), 0);
@@ -4773,19 +4907,97 @@ static void shade_open(bool anim) {
   lv_obj_set_style_border_width(p, 1, 0);
   lv_obj_set_style_border_color(p, lv_color_hex(C_BORDER), 0);
   lv_obj_add_flag(p, LV_OBJ_FLAG_CLICKABLE);                   // i tocchi sul pannello non chiudono
-  // comandi rapidi: nome sopra, stato sotto
-  shade_btn(p, 20, TRS("richieste", "requests"), g_userPause ? TRS("in pausa", "paused") : TRS("attive", "active"),
-            g_userPause ? C_WARN : C_OK, shade_cb, (void *)(intptr_t)1);
-  char tt[12]; shade_timer_text(tt, sizeof(tt));
-  g_shadeTm = shade_btn(p, 132, "timer", tt, g_tmMode ? tm_color() : C_MUTED, shade_cb, (void *)(intptr_t)2);
-  shade_btn(p, 244, TRS("luce", "light"), bri_label(), C_ACCENT, shade_cb, (void *)(intptr_t)3);
-  shade_btn(p, 356, TRS("suoni pc", "pc sound"), g_pcSound ? TRS("s\xC3\xAC", "on") : "no", g_pcSound ? C_OK : C_MUTED,
-            shade_cb, (void *)(intptr_t)4);
-  tstatic(p, TRS("ultimi avvisi", "recent alerts"), F12, C_MUTED, 20, 70);
-  if (!g_alN) tstatic(p, TRS("nessun avviso recente", "no recent alerts"), F14, C_FAINT, 20, 96);
-  for (int i = 0; i < g_alN; i++) {
+  shade_status_row(p);
+  // comandi rapidi scelti nelle impostazioni (schermo > tendina): nome sopra, stato sotto
+  int slot = 0;
+  time_t now = time(nullptr);
+  for (int k = 0; k < SHB_N && slot < 4; k++) {
+    if (!((g_shBtn >> k) & 1)) continue;
+    int x = 20 + slot++ * 112, y = 34;
+    char st[24]; uint32_t col = C_MUTED;
+    switch (k) {
+      case SHB_PAUSE:
+        strlcpy(st, g_userPause ? TRS("in pausa", "paused") : TRS("attive", "active"), sizeof(st));
+        col = g_userPause ? C_WARN : C_OK;
+        shade_btn(p, x, y, shade_btn_name(k), st, col, shade_cb, (void *)(intptr_t)1);
+        break;
+      case SHB_TIMER:
+        shade_timer_text(st, sizeof(st));
+        g_shadeTm = shade_btn(p, x, y, "timer", st, g_tmMode ? tm_color() : C_MUTED, shade_cb, (void *)(intptr_t)2);
+        break;
+      case SHB_LIGHT: {
+        char b[24]; snprintf(b, sizeof(b), "%s%s", bri_label(), g_autoBri ? " auto" : "");
+        shade_btn(p, x, y, shade_btn_name(k), b, C_ACCENT, shade_cb, (void *)(intptr_t)3);
+        break;
+      }
+      case SHB_SOUND:
+        shade_btn(p, x, y, shade_btn_name(k), g_pcSound ? TRS("s\xC3\xAC", "on") : "no", g_pcSound ? C_OK : C_MUTED,
+                  shade_cb, (void *)(intptr_t)4);
+        break;
+      case SHB_REFRESH:
+        shade_btn(p, x, y, shade_btn_name(k), g_refreshing ? TRS("in corso", "running") : TRS("adesso", "now"), C_ACCENT,
+                  shade_cb, (void *)(intptr_t)5);
+        break;
+      case SHB_CAL: {
+        int n = 0;
+        if (now > 1000000000L) { int idx[12]; n = cal_day_events(day_start(now), idx, 12); }
+        if (!g_ical[0]) strlcpy(st, TRS("da impostare", "not set"), sizeof(st));
+        else if (n) snprintf(st, sizeof(st), TRS("%d oggi", "%d today"), n);
+        else strlcpy(st, TRS("libero", "free"), sizeof(st));
+        shade_btn(p, x, y, shade_btn_name(k), st, n ? C_BLUE : C_MUTED, shade_cb, (void *)(intptr_t)6);
+        break;
+      }
+      case SHB_WX:
+        if (g_wx.ok) snprintf(st, sizeof(st), TRS("%.0f\xC2\xB0 " U_MIDDOT " 7 gg", "%.0f\xC2\xB0 " U_MIDDOT " 7 days"), g_wx.temp);
+        else strlcpy(st, "--", sizeof(st));
+        shade_btn(p, x, y, shade_btn_name(k), st, C_TEXT, shade_cb, (void *)(intptr_t)7);
+        break;
+    }
+  }
+  // oggi: pomodori, Claude al lavoro, 5 ore
+  {
+    cc_stat_roll();
+    char t[120], d[12];
+    int n = snprintf(t, sizeof(t), TRS("oggi  %d %s", "today  %d %s"), pomo_today(), pomo_word(pomo_today()));
+    if (g_ccN) { dur_short(g_ccT, d, sizeof(d)); n += snprintf(t + n, sizeof(t) - n, TRS(" " U_MIDDOT " claude %d richieste, %s", " " U_MIDDOT " claude %d requests, %s"), g_ccN, d); }
+    if (g_usage.ok) snprintf(t + n, sizeof(t) - n, " " U_MIDDOT " 5h %.0f%%", g_usage.h5);
+    lv_obj_t *l = tstatic(p, t, F12, C_MUTED, 20, 88);
+    lv_obj_set_width(l, 440);
+    lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+  }
+  // prossimo evento: tocca per aprire il calendario su quel giorno
+  {
+    int ci = (g_calN && now > 1000000000L) ? cal_next((uint32_t)now) : -1;
     lv_obj_t *r = plain_obj(p);
-    lv_obj_set_pos(r, 12, 90 + i * 30);
+    lv_obj_set_pos(r, 12, 106);
+    lv_obj_set_size(r, 456, 24);
+    char t[120];
+    if (ci >= 0) {
+      lv_obj_add_flag(r, LV_OBJ_FLAG_CLICKABLE);
+      lv_obj_set_style_bg_color(r, lv_color_hex(C_SURFACE), LV_STATE_PRESSED);
+      lv_obj_set_style_bg_opa(r, LV_OPA_COVER, LV_STATE_PRESSED);
+      lv_obj_add_event_cb(r, shade_cb, LV_EVENT_CLICKED, (void *)(intptr_t)9);
+      char hm[12]; fmt_hm(g_cal[ci].s, hm, sizeof(hm));
+      struct tm ev, tv; time_t es = g_cal[ci].s; localtime_r(&es, &ev); localtime_r(&now, &tv);
+      bool nowOn = g_cal[ci].s <= (uint32_t)now;
+      static const char *GS_IT[7] = {"dom", "lun", "mar", "mer", "gio", "ven", "sab"};
+      static const char *GS_EN[7] = {"sun", "mon", "tue", "wed", "thu", "fri", "sat"};
+      if (nowOn) snprintf(t, sizeof(t), TRS("in corso  %s", "now  %s"), g_cal[ci].title);
+      else if (ev.tm_yday == tv.tm_yday && ev.tm_year == tv.tm_year) snprintf(t, sizeof(t), TRS("prossimo  oggi %s  %s", "next  today %s  %s"), hm, g_cal[ci].title);
+      else snprintf(t, sizeof(t), TRS("prossimo  %s %d, %s  %s", "next  %s %d, %s  %s"), (g_lang ? GS_EN : GS_IT)[ev.tm_wday], ev.tm_mday, hm, g_cal[ci].title);
+      lv_obj_t *l = tstatic(r, t, F12, nowOn ? C_OK : C_BLUE, 8, 5);
+      lv_obj_set_width(l, 440);
+      lv_label_set_long_mode(l, LV_LABEL_LONG_DOT);
+    } else {
+      tstatic(r, g_ical[0] ? TRS("nessun evento in arrivo", "no upcoming events") : TRS("calendario non impostato", "calendar not set"),
+              F12, C_FAINT, 8, 5);
+    }
+  }
+  tstatic(p, TRS("ultimi avvisi", "recent alerts"), F12, C_MUTED, 20, 140);
+  if (!g_alN) tstatic(p, TRS("nessun avviso recente", "no recent alerts"), F14, C_FAINT, 20, 164);
+  for (int i = 0; i < g_alN && i < 3; i++) {
+    lv_obj_t *r = plain_obj(p);
+    lv_obj_set_pos(r, 12, 160 + i * 30);
     lv_obj_set_size(r, 456, 28);
     lv_obj_add_flag(r, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_bg_color(r, lv_color_hex(C_SURFACE), LV_STATE_PRESSED);
@@ -5131,6 +5343,22 @@ static void settings_action_cb(lv_event_t *e) {
         request_state(ST_SETTINGS);
       }
       break;
+    case 30:                                           // promemoria pausa: spento -> 45 -> 60 -> 90 min
+      g_brkIdx = (g_brkIdx + 1) % 4;
+      g_prefs.putInt("brk", g_brkIdx);
+      g_brkNext = 0;
+      request_state(ST_SETTINGS);
+      break;
+    case 40: case 41: case 42: case 43: case 44: case 45: case 46: {   // tasti della tendina
+      int k = act - 40;
+      bool on = (g_shBtn >> k) & 1;
+      if (on && shade_btn_count() == 1) break;           // almeno uno
+      if (!on && shade_btn_count() >= 4) break;          // al massimo quattro
+      g_shBtn ^= (uint8_t)(1 << k);
+      g_prefs.putUInt("shbtn", g_shBtn);
+      request_state(ST_SETTINGS);
+      break;
+    }
     case 29:                                           // luminosita' automatica: spento -> col sole -> 20-07 -> 21-07
       g_autoBri = (g_autoBri + 1) % 4;
       g_prefs.putInt("autobri", g_autoBri);
@@ -5167,7 +5395,8 @@ static void settings_action_cb(lv_event_t *e) {
   }
 }
 // Impostazioni a gruppi: una pagina principale con le voci, e una pagina per gruppo
-enum { SG_MAIN = 0, SG_CLAUDE, SG_ALERTS, SG_SCREEN, SG_NET, SG_SYSTEM };
+enum { SG_MAIN = 0, SG_CLAUDE, SG_ALERTS, SG_SCREEN, SG_NET, SG_SYSTEM, SG_SHADE };
+static void open_settings_group(int g) { g_setGroup = g; g_setScroll = 0; request_state(ST_SETTINGS); }
 static void set_group_cb(lv_event_t *e) {
   g_setGroup = (int)(intptr_t)lv_event_get_user_data(e);
   g_setScroll = 0;
@@ -5180,15 +5409,16 @@ static void ui_settings() {
   static int lastGroup = -1;                       // cambiando gruppo si riparte dall'inizio della lista
   if (lastGroup != g_setGroup) g_setScroll = 0;
   lastGroup = g_setGroup;
-  static const char *GT_IT[6] = {"impostazioni", "claude", "avvisi", "schermo", "rete e pc", "sistema"};
-  static const char *GT_EN[6] = {"settings", "claude", "alerts", "screen", "network and pc", "system"};
+  static const char *GT_IT[7] = {"impostazioni", "claude", "avvisi", "schermo", "rete e pc", "sistema", "tendina"};
+  static const char *GT_EN[7] = {"settings", "claude", "alerts", "screen", "network and pc", "system", "pull-down"};
   char title[40];
   if (g_setGroup == SG_MAIN) strcpy(title, g_lang ? GT_EN[0] : GT_IT[0]);
   else snprintf(title, sizeof(title), "%s / %s", g_lang ? GT_EN[0] : GT_IT[0], g_lang ? GT_EN[g_setGroup] : GT_IT[g_setGroup]);
   if (g_setGroup == SG_MAIN) thead(scr, title, g_usage.ok ? ST_MAIN : ST_SETTINGS);
   else {
     thead(scr, title, -1);
-    tbtn(scr, 378, 5, 89, 32, TRS(U_LEFT " indietro", U_LEFT " back"), F14, C_MUTED, C_BORDER, set_group_cb, (void *)(intptr_t)SG_MAIN);
+    tbtn(scr, 378, 5, 89, 32, TRS(U_LEFT " indietro", U_LEFT " back"), F14, C_MUTED, C_BORDER, set_group_cb,
+         (void *)(intptr_t)(g_setGroup == SG_SHADE ? SG_SCREEN : SG_MAIN));
   }
   lv_obj_t *lst = tlist(scr, 13, 47, 454, 273);
   g_setList = lst;
@@ -5247,6 +5477,23 @@ static void ui_settings() {
              C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)24);
       kv_row(lst, TRS("avviso reset", "reset alert"), g_resetAlert ? TRS("sopra 80%", "above 80%") : TRS("spento", "off"),
              C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)15);
+      {
+        char bk[24];
+        if (g_brkIdx) snprintf(bk, sizeof(bk), TRS("dopo %d min", "after %d min"), BRK_MIN[g_brkIdx]); else strcpy(bk, TRS("spento", "off"));
+        kv_row(lst, TRS("promemoria pausa", "break reminder"), bk, C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)30);
+      }
+      break;
+    }
+    case SG_SHADE: {                                     // quali tasti nella tendina (al massimo quattro)
+      char h[48]; snprintf(h, sizeof(h), TRS("fino a 4 tasti (scelti %d)", "up to 4 buttons (%d chosen)"), shade_btn_count());
+      lv_obj_t *hr = plain_obj(lst);
+      lv_obj_set_size(hr, 454, 30);
+      tstatic(hr, h, F12, C_MUTED, 13, 8);
+      for (int k = 0; k < SHB_N; k++) {
+        bool on = (g_shBtn >> k) & 1;
+        kv_row(lst, shade_btn_name(k), on ? TRS("s\xC3\xAC", "yes") : "no", C_TEXT, on ? C_OK : C_MUTED,
+               settings_action_cb, (void *)(intptr_t)(40 + k));
+      }
       break;
     }
     case SG_SCREEN: {
@@ -5256,6 +5503,10 @@ static void ui_settings() {
         static const char *AB_EN[4] = {"off", "with the sun", "20:00-07:00", "21:00-07:00"};
         kv_row(lst, TRS("luminosit\xC3\xA0 auto", "auto brightness"), (g_lang ? AB_EN : AB_IT)[g_autoBri],
                C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)29);
+      }
+      {
+        char tb[24]; snprintf(tb, sizeof(tb), TRS("%d tasti", "%d buttons"), shade_btn_count());
+        sub(SG_SHADE, tb);
       }
       static const char *NIGHT_LBL[4] = {"", "22:00-07:00", "23:00-07:00", "00:00-07:00"};
       kv_row(lst, TRS("notte", "night"), g_nightIdx ? NIGHT_LBL[g_nightIdx] : TRS("spento", "off"),
@@ -6235,6 +6486,7 @@ void loop() {
       lastTick = now; dash_tick(); home_tick(); if (g_tmMode) set_hdr_status();
       cal_tick();
       tm_restore();
+      brk_tick();
       if (g_shadeTm) { char tt[12]; shade_timer_text(tt, sizeof(tt)); label_set(g_shadeTm, tt); }
       if (g_ccBusyN && (!g_pcAtMs || now - g_pcAtMs > pc_stale_ms())) { g_ccBusyN = 0; cc_busy_ui(); }
     }
@@ -6356,7 +6608,7 @@ void loop() {
       int k = g_ntPend;
       g_ntPend = NT_NONE;
       if (!g_ntT0) g_lastTouchMs = millis();
-      if (k == NT_CLAUDE) cc_show(); else if (k == NT_CAL) cal_show(); else tm_show();
+      if (k == NT_CLAUDE) cc_show(); else if (k == NT_CAL) cal_show(); else if (k == NT_BRK) brk_show(); else tm_show();
     }
     if (g_nt.scrim) notice_tick();
   }

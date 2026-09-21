@@ -16,7 +16,7 @@ const C = {
   BORDER: '#3A3834', TEXT: '#E8E6DF', MUTED: '#8E8B82', FAINT: '#5C5A55', ACCENT: '#D97757',
   OK: '#9BC08A', WARN: '#E0B25A', BAD: '#E06C5A', BLUE: '#7DB9D6', LILAC: '#B7A6E0',
 };
-const CFG = { PIN_LEN: 4, MAX_PIN_ATTEMPTS: 10, LOCKOUT_SEC: 15, ACCT_MAX: 4, FW: '3.9.9' };
+const CFG = { PIN_LEN: 4, MAX_PIN_ATTEMPTS: 10, LOCKOUT_SEC: 15, ACCT_MAX: 4, FW: '3.9.10' };
 const DEMO_PIN = '1234';
 
 const $ = (id) => document.getElementById(id);
@@ -46,7 +46,10 @@ const pad2 = (n) => String(n).padStart(2, '0');
 
 // ---------- stato persistente (NVS simulata) ----------
 const TZ_ROME = 99;
-const P = { lang: 0, tz: TZ_ROME, poll: 120, slide: 0, heatm: 3, bri: 1, pinatt: 0, rstal: true, ccal: 2, ccclose: 2, ccfocus: false, pcsnd: true, night: 0, nightp: true, dim: 0, pause: false, pauseUntil: 0, clock: 0, nightclk: true, nightbri: 0, autobri: 0 };
+const P = { lang: 0, tz: TZ_ROME, poll: 120, slide: 0, heatm: 3, bri: 1, pinatt: 0, rstal: true, ccal: 2, ccclose: 2, ccfocus: false, pcsnd: true, night: 0, nightp: true, dim: 0, pause: false, pauseUntil: 0, clock: 0, nightclk: true, nightbri: 0, autobri: 0, brk: 0, shbtn: 0x0F };
+// Claude oggi e minuti di PC in uso (come il firmware e il PC Monitor)
+const CCS = { n: 8, t: 4320, x: 840 };
+const durShort = (s) => s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h${pad2(Math.floor(s / 60) % 60)}`;
 const TRS = (pt, en) => (P.lang ? en : pt);
 
 // ---------- stato app ----------
@@ -1414,31 +1417,65 @@ function alLine(r) {
 }
 let SHADE = null;
 function shadeClose() { if (SHADE) { SHADE.remove(); SHADE = null; } }
+const SHB_NAMES = () => [TRS('richieste', 'requests'), 'timer', TRS('luce', 'light'), TRS('suoni pc', 'pc sound'), TRS('aggiorna', 'refresh'), TRS('calendario', 'calendar'), TRS('meteo', 'weather')];
+const shbCount = () => [0, 1, 2, 3, 4, 5, 6].filter((k) => (P.shbtn >> k) & 1).length;
 function shadeOpen(anim) {
   shadeClose();
   const s = obj(scr, 0, 0, 480, 320, { background: 'rgba(20,20,19,.6)', zIndex: 55 });
   s.addEventListener('click', (e) => { e.stopPropagation(); shadeClose(); });
   SHADE = s;
-  const H = 262;
+  const H = 272;
   const p = obj(s, 0, 0, 480, H, { background: C.BG, borderBottom: `1px solid ${C.BORDER}`, transition: anim ? 'top .18s ease-out' : '' });
   p.addEventListener('click', (e) => e.stopPropagation());
   if (anim) { p.style.top = -H + 'px'; requestAnimationFrame(() => requestAnimationFrame(() => { p.style.top = '0px'; })); }
-  const bri = [TRS('bassa', 'low'), TRS('media', 'medium'), TRS('alta', 'high')][P.bri];
+  // riga di stato: tacche del wifi, dBm, indirizzo, pc
+  const st = obj(p, 12, 6, 456, 22, { cursor: 'pointer' });
+  st.addEventListener('click', (e) => { e.stopPropagation(); shadeClose(); });
+  const rssi = -58, bars = rssi > -55 ? 4 : rssi > -65 ? 3 : rssi > -75 ? 2 : 1;
+  for (let i = 0; i < 4; i++) rrect(st, 8 + i * 5, 15 - (i + 1) * 3, 3, (i + 1) * 3, 0, i < bars ? (bars >= 3 ? C.OK : C.WARN) : C.BORDER);
+  label(st, `${rssi} dBm · 192.168.5.13`, 12, C.TEXT, 36, 4);
+  const pcl = label(st, TRS('pc collegato', 'pc connected'), 12, C.OK, 248, 4);
+  Object.assign(pcl.style, { width: '200px', textAlign: 'right' });
+  const bri = [TRS('bassa', 'low'), TRS('media', 'medium'), TRS('alta', 'high')][P.bri] + (P.autobri ? ' auto' : '');
   const tl = TM.mode ? `${pad2(Math.floor(tmLeft() / 60))}:${pad2(tmLeft() % 60)}` : TRS('spento', 'off');
-  const Q = [
-    [TRS('richieste', 'requests'), P.pause ? TRS('in pausa', 'paused') : TRS('attive', 'active'), P.pause ? C.WARN : C.OK, () => pauseSet(!P.pause, 0)],
-    ['timer', tl, TM.mode ? tmColor() : C.MUTED, () => { shadeClose(); tmMenuOpen(); return true; }],
-    [TRS('luce', 'light'), bri, C.ACCENT, () => { P.bri = (P.bri + 1) % 3; applyBrightness(); }],
-    [TRS('suoni pc', 'pc sound'), P.pcsnd ? TRS('sì', 'on') : 'no', P.pcsnd ? C.OK : C.MUTED, () => { P.pcsnd = !P.pcsnd; }],
+  const now = nowEpoch(), todayN = CAL_ALL.filter((c) => c.s < dayAdd(dayStart(now), 1) && c.e > dayStart(now)).length;
+  const N = SHB_NAMES();
+  const ALL = [
+    [N[0], P.pause ? TRS('in pausa', 'paused') : TRS('attive', 'active'), P.pause ? C.WARN : C.OK, () => pauseSet(!P.pause, 0)],
+    [N[1], tl, TM.mode ? tmColor() : C.MUTED, () => { shadeClose(); tmMenuOpen(); return true; }],
+    [N[2], bri, C.ACCENT, () => { P.bri = (P.bri + 1) % 3; applyBrightness(); }],
+    [N[3], P.pcsnd ? TRS('sì', 'on') : 'no', P.pcsnd ? C.OK : C.MUTED, () => { P.pcsnd = !P.pcsnd; }],
+    [N[4], TRS('adesso', 'now'), C.ACCENT, () => { shadeClose(); return true; }],
+    [N[5], todayN ? TRS(`${todayN} oggi`, `${todayN} today`) : TRS('libero', 'free'), todayN ? C.BLUE : C.MUTED, () => { shadeClose(); calViewOpen(); return true; }],
+    [N[6], TRS(`${WX.temp}° · 7 gg`, `${WX.temp}° · 7 days`), C.TEXT, () => { shadeClose(); wxWeekOpen(); return true; }],
   ];
-  Q.forEach(([name, st, c, fn], i) => {
-    const bt = tbtn(p, `<span style="font-size:14px">${name}</span><br><span style="font-size:12px;color:${c}">${st}</span>`, 104, 44, () => { if (!fn()) shadeOpen(false); }, { size: 12 });
-    bt.style.left = (20 + i * 112) + 'px'; bt.style.top = '12px'; bt.style.lineHeight = '1.25';
+  ALL.filter((_, k) => (P.shbtn >> k) & 1).slice(0, 4).forEach(([name, stt, c, fn], i) => {
+    const bt = tbtn(p, `<span style="font-size:14px">${name}</span><br><span style="font-size:12px;color:${c}">${stt}</span>`, 104, 44, () => { if (!fn()) shadeOpen(false); }, { size: 12 });
+    bt.style.left = (20 + i * 112) + 'px'; bt.style.top = '34px'; bt.style.lineHeight = '1.25';
   });
-  label(p, TRS('ultimi avvisi', 'recent alerts'), 12, C.MUTED, 20, 70);
-  if (!AL.length) label(p, TRS('nessun avviso recente', 'no recent alerts'), 14, C.FAINT, 20, 96);
-  AL.forEach((r, i) => {
-    const row = obj(p, 12, 90 + i * 30, 456, 28, { cursor: 'pointer' });
+  // oggi: pomodori, claude, 5 ore
+  const pt = pomoToday();
+  let sum = TRS(`oggi  ${pt} ${pt === 1 ? 'pomodoro' : 'pomodori'}`, `today  ${pt} ${pt === 1 ? 'pomodoro' : 'pomodoros'}`);
+  if (CCS.n) sum += TRS(` · claude ${CCS.n} richieste, ${durShort(CCS.t)}`, ` · claude ${CCS.n} requests, ${durShort(CCS.t)}`);
+  if (G.usage.ok) sum += ` · 5h ${Math.round(G.usage.h5)}%`;
+  const sl = label(p, sum, 12, C.MUTED, 20, 88);
+  Object.assign(sl.style, { width: '440px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+  // prossimo evento
+  const ev = CAL_ALL.filter((c) => !c.a && c.e > now).sort((x, y) => x.s - y.s)[0];   // come il PC: senza quelli di tutto il giorno
+  const er = obj(p, 12, 106, 456, 24, { cursor: ev ? 'pointer' : 'default' });
+  if (ev) {
+    er.addEventListener('click', (e) => { e.stopPropagation(); shadeClose(); calViewOpen(); });
+    const d = new Date(ev.s * 1000), on = ev.s <= now, GS = P.lang ? ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] : ['dom', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab'];
+    const same = d.toDateString() === new Date(now * 1000).toDateString();
+    const t = on ? TRS(`in corso  ${ev.t}`, `now  ${ev.t}`) : same ? TRS(`prossimo  oggi ${fmtHm(ev.s)}  ${ev.t}`, `next  today ${fmtHm(ev.s)}  ${ev.t}`)
+      : TRS(`prossimo  ${GS[d.getDay()]} ${d.getDate()}, ${fmtHm(ev.s)}  ${ev.t}`, `next  ${GS[d.getDay()]} ${d.getDate()}, ${fmtHm(ev.s)}  ${ev.t}`);
+    const l = label(er, escapeHtml(t), 12, on ? C.OK : C.BLUE, 8, 5);
+    Object.assign(l.style, { width: '440px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+  } else label(er, TRS('nessun evento in arrivo', 'no upcoming events'), 12, C.FAINT, 8, 5);
+  label(p, TRS('ultimi avvisi', 'recent alerts'), 12, C.MUTED, 20, 140);
+  if (!AL.length) label(p, TRS('nessun avviso recente', 'no recent alerts'), 14, C.FAINT, 20, 164);
+  AL.slice(0, 3).forEach((r, i) => {
+    const row = obj(p, 12, 160 + i * 30, 456, 28, { cursor: 'pointer' });
     row.addEventListener('click', (e) => { e.stopPropagation(); shadeClose(); alShow(i); });
     const [t, col] = alLine(r);
     rrect(row, 8, 10, 8, 8, 4, col);

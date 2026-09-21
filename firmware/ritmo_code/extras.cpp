@@ -234,6 +234,7 @@ bool fetchPcStats(const char* host, PcStats& out) {
   out.ccDur  = (int)jnum(s, "cc_ev_dur", 0, -1);
   out.ccAge  = (int)jnum(s, "cc_ev_age", 0, 9999);
   out.ccBusy = (int)jnum(s, "cc_busy");
+  out.actMin = (int)jnum(s, "act_min", 0, -1);
   // calendario: cal_n e, per ogni evento, cal<i>_t (titolo), cal<i>_s / cal<i>_e (epoch)
   out.calN = (int)jnum(s, "cal_n", 0, -1);
   if (out.calN > 3) out.calN = 3;
