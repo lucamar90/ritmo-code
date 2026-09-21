@@ -9,7 +9,7 @@ No computer running, no app, no cloud.
 
 [Italiano](README.md) · **English**
 
-<img src="https://img.shields.io/badge/firmware-v3.9.10-D97757?style=for-the-badge" alt="firmware v3.9.10">
+<img src="https://img.shields.io/badge/firmware-v3.9.11-D97757?style=for-the-badge" alt="firmware v3.9.11">
 <img src="https://img.shields.io/badge/ESP32--S3-AXS15231B%20480×320-1B1A18?style=for-the-badge" alt="ESP32-S3 AXS15231B">
 <img src="https://img.shields.io/badge/LVGL-9.2.2-9BC08A?style=for-the-badge" alt="LVGL 9.2.2">
 <img src="https://img.shields.io/badge/accounts-up%20to%204-8E8B82?style=for-the-badge" alt="up to 4 accounts">
@@ -88,6 +88,8 @@ Anthropic, and the token is never exposed.
 - **Pause requests** from the header button, indefinitely or for a set time; resumes by itself.
 - **Pull-down panel** (drag down from the header): Wi-Fi signal, address and PC link (tap for the network page), **four buttons of your choice** among requests, timer, light, pc sounds, refresh, calendar and weather (*Settings → screen → pull-down*), **today's summary** (pomodoros, Claude requests and working time, 5-hour window), the **next event** (tap to open the calendar on that day) and the last three alerts.
 - **Break reminder**: after 45, 60 or 90 minutes of continuous PC use (mouse and keyboard, read by the PC Monitor) Clawd reminds you to stand up; it repeats every half hour and resets after 5 minutes away (*Settings → alerts*).
+- **Media**: when music or a video starts on the PC (Spotify, browsers, players) the media page opens: cover, title, artist, progress bar (tap to seek), previous / play-pause / next and PC volume. It also opens from the pull-down; auto-open can be turned off in *Settings → screen*. Needs PC Monitor 1.8.
+- **Countdown**: up to three named dates ("site launch in 12 days"), created on the device (pull-down → countdown) or in the web panel, page `/home`. When one arrives Clawd tells you, with a sound on the PC.
 - **Claude today**: finished requests, total working time and the longest one, in the pull-down and on the rhythm page (claude tab, *today*).
 - **Home and weather**: clock, date and forecast for your city (Open-Meteo, free and keyless), refreshed every 30 minutes. Tap the weather for the **7-day forecast**.
 - **PC statistics** through the [Ritmo Code PC Monitor](#ritmo-code-pc-monitor) app, read every 1, 3, 5 seconds or 1 minute.

@@ -28,7 +28,7 @@ import winreg
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP = "ritmo-code-pc-monitor"
-VERSION = "1.7.0"
+VERSION = "1.8.0"
 DEFAULT_PORT = 8765
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "RitmoCodePcMonitor")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
@@ -820,6 +820,7 @@ def make_handler(sampler, lhm, port):
                 data = sampler.snapshot()
                 data.update(CLAUDE.fields())
                 data.update(CAL.fields())
+                data.update(MEDIA.fields())
                 if data.get("claude_sessions", -1) >= 0:          # mai piu' sessioni al lavoro di quelle aperte
                     data["cc_busy"] = min(data["cc_busy"], data["claude_sessions"])
                 data.update({"app": APP, "version": VERSION})
@@ -836,6 +837,18 @@ def make_handler(sampler, lhm, port):
                     cfg["device"] = devices[0]["ip"]
                     save_config(cfg)
                 self._send(200, "application/json", json.dumps(devices))
+            elif path == "/media/cover.bin" and (self._from_device() or self._local()):
+                cover, mid = MEDIA.cover_bin()
+                if not cover:
+                    self._send(404, "text/plain", "nessuna copertina")
+                else:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/octet-stream")
+                    self.send_header("Content-Length", str(len(cover)))
+                    self.send_header("X-Media-Id", str(mid))
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    self.wfile.write(cover)
             elif path == "/calendar.json" and (self._from_device() or self._local()):
                 self._send(200, "application/json", json.dumps(CAL.range_json(), ensure_ascii=False))
             elif path == "/api/calendar" and self._local():
@@ -866,6 +879,23 @@ def make_handler(sampler, lhm, port):
 
         def do_POST(self):
             path = self.path.split("?")[0]
+            if path == "/media" and (self._from_device() or self._local()):   # comando dalla pagina media
+                try:
+                    length = min(int(self.headers.get("Content-Length", "0") or 0), 512)
+                    form = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8", "replace"))
+                except Exception:
+                    form = {}
+                action = (form.get("a") or [""])[0]
+                self.send_response(204)
+                self.send_header("Connection", "close")
+                self.end_headers()
+                if action in ("toggle", "next", "prev", "seek", "volup", "voldown", "mute"):
+                    try:
+                        arg = float((form.get("s") or ["0"])[0]) if action == "seek" else None
+                    except ValueError:
+                        arg = None
+                    MEDIA.command(action, arg)
+                return
             if path == "/notify" and self._from_device():   # avviso dal dispositivo: suono e notifica
                 try:
                     length = min(int(self.headers.get("Content-Length", "0") or 0), 4096)
@@ -1248,6 +1278,171 @@ class Calendar(threading.Thread):
 CAL = Calendar()
 
 
+# ---------------------------------------------------------------------------
+# Media in riproduzione (Spotify, browser, lettori): pagina "media" del dispositivo
+# ---------------------------------------------------------------------------
+try:
+    import asyncio
+    from winrt.windows.media.control import GlobalSystemMediaTransportControlsSessionManager as _MediaManager
+    from winrt.windows.graphics.imaging import (BitmapDecoder, BitmapTransform, BitmapPixelFormat, BitmapAlphaMode,
+                                                BitmapInterpolationMode, ExifOrientationMode, ColorManagementMode,
+                                                BitmapBounds)
+    HAVE_MEDIA = True
+except Exception as _media_error:              # avviato da sorgente senza i pacchetti winrt
+    HAVE_MEDIA = False
+    print(f"[media] non disponibile: {_media_error}")
+
+MEDIA_APPS = {"spotify": "Spotify", "chrome": "Chrome", "msedge": "Edge", "firefox": "Firefox", "vlc": "VLC",
+              "zune": "Media Player", "microsoft.media": "Media Player", "applemusic": "Apple Music",
+              "amazonmusic": "Amazon Music", "tidal": "Tidal", "deezer": "Deezer", "youtube": "YouTube"}
+VK_MEDIA = {"volup": 0xAF, "voldown": 0xAE, "mute": 0xAD}
+
+
+def _media_app(aumid):
+    low = (aumid or "").lower()
+    for key, name in MEDIA_APPS.items():
+        if key in low:
+            return name
+    base = re.split(r"[\\/!]", aumid or "")[-1]
+    return re.sub(r"\.exe$", "", base, flags=re.I)[:18] or "media"
+
+
+def _media_text(t, n):
+    t = (t or "").replace('"', "'").replace("\\", "/")
+    return "".join(ch for ch in t if ch >= " " and ord(ch) <= 0xFF).strip()[:n]
+
+
+class Media(threading.Thread):
+    """Sessione multimediale corrente di Windows: stato ogni secondo, comandi dal dispositivo, copertina RGB565."""
+
+    COVER = 160
+
+    def __init__(self):
+        super().__init__(daemon=True)
+        self.lock = threading.Lock()
+        self.state = {"media_st": 0}
+        self.cover, self.cover_key = b"", ""
+        self.cmds = []
+        self.wake = threading.Event()
+
+    def fields(self):
+        with self.lock:
+            return dict(self.state, media_ok=1 if HAVE_MEDIA else 0)
+
+    def cover_bin(self):
+        with self.lock:
+            return self.cover, self.state.get("media_id", 0)
+
+    def command(self, action, arg=None):
+        with self.lock:
+            self.cmds.append((action, arg))
+        self.wake.set()
+
+    def run(self):
+        if HAVE_MEDIA:
+            asyncio.run(self._main())
+
+    async def _main(self):
+        manager = None
+        while True:
+            try:
+                if manager is None:
+                    manager = await _MediaManager.request_async()
+                await self._poll(manager)
+            except Exception as error:
+                print(f"[media] errore: {error}")
+                manager = None
+            await asyncio.get_running_loop().run_in_executor(None, self.wake.wait, 1.0)
+            self.wake.clear()
+
+    async def _poll(self, manager):
+        with self.lock:
+            cmds, self.cmds = self.cmds, []
+        session = manager.get_current_session()
+        for action, arg in cmds:
+            if action in VK_MEDIA:                         # volume di sistema: tasti multimediali
+                k = VK_MEDIA[action]
+                ctypes.windll.user32.keybd_event(k, 0, 0, 0)
+                ctypes.windll.user32.keybd_event(k, 0, 2, 0)
+            elif session is not None:
+                if action == "toggle":
+                    await session.try_toggle_play_pause_async()
+                elif action == "next":
+                    await session.try_skip_next_async()
+                elif action == "prev":
+                    await session.try_skip_previous_async()
+                elif action == "seek" and arg is not None:
+                    await session.try_change_playback_position_async(int(max(0, arg) * 10_000_000))
+        if cmds:
+            await asyncio.sleep(0.25)                      # lascia al lettore il tempo di aggiornarsi
+        if session is None:
+            with self.lock:
+                self.state = {"media_st": 0}
+            return
+        info = await session.try_get_media_properties_async()
+        pb = session.get_playback_info()
+        tl = session.get_timeline_properties()
+        status = int(pb.playback_status)                   # 4 in riproduzione, 5 in pausa
+        st = 1 if status == 4 else 2 if status in (2, 3, 5) else 0
+        pos = tl.position.total_seconds() if tl.position else 0
+        dur = (tl.end_time - tl.start_time).total_seconds() if tl.end_time else 0
+        if st == 1 and tl.last_updated_time:               # la posizione e' quella dell'ultimo aggiornamento
+            import datetime as dt
+            ago = (dt.datetime.now(dt.timezone.utc) - tl.last_updated_time).total_seconds()
+            if 0 < ago < 3600:
+                pos += ago
+        title, artist = _media_text(info.title, 60), _media_text(info.artist or info.album_artist, 44)
+        key = f"{title}|{artist}|{info.album_title}"
+        mid = (hash(key) & 0x7FFFFFFF) or 1
+        c = pb.controls
+        ctl = (1 if c.is_previous_enabled else 0) | (2 if c.is_next_enabled else 0) | (4 if c.is_play_pause_toggle_enabled or c.is_pause_enabled or c.is_play_enabled else 0)
+        if key != self.cover_key:
+            self.cover_key = key
+            cover = b""
+            try:
+                if info.thumbnail:
+                    cover = await self._cover(info.thumbnail)
+            except Exception as error:
+                print(f"[media] copertina: {error}")
+            with self.lock:
+                self.cover = cover
+        with self.lock:
+            self.state = {"media_st": st, "media_t": title or "(senza titolo)", "media_a": artist,
+                          "media_app": _media_app(session.source_app_user_model_id),
+                          "media_pos": int(pos), "media_dur": int(dur if dur > 0 else 0),
+                          "media_id": mid, "media_cv": 1 if self.cover else 0, "media_ctl": ctl}
+
+    async def _cover(self, ref):
+        """Copertina quadrata COVER x COVER (ritaglio centrale), RGB565 little-endian come lo schermo LVGL."""
+        stream = await ref.open_read_async()
+        dec = await BitmapDecoder.create_async(stream)
+        w, h, n = dec.pixel_width, dec.pixel_height, self.COVER
+        if not w or not h:
+            return b""
+        k = n / min(w, h)
+        sw, sh = max(n, round(w * k)), max(n, round(h * k))
+        tr = BitmapTransform()
+        tr.scaled_width, tr.scaled_height = sw, sh
+        tr.interpolation_mode = BitmapInterpolationMode.FANT
+        tr.bounds = BitmapBounds((sw - n) // 2, (sh - n) // 2, n, n)
+        pd = await dec.get_pixel_data_transformed_async(BitmapPixelFormat.BGRA8, BitmapAlphaMode.IGNORE, tr,
+                                                        ExifOrientationMode.RESPECT_EXIF_ORIENTATION,
+                                                        ColorManagementMode.DO_NOT_COLOR_MANAGE)
+        px = bytes(pd.detach_pixel_data())
+        if len(px) < n * n * 4:
+            return b""
+        out = bytearray(n * n * 2)
+        for i in range(n * n):
+            bb, gg, rr = px[4 * i], px[4 * i + 1], px[4 * i + 2]
+            v = ((rr & 0xF8) << 8) | ((gg & 0xFC) << 3) | (bb >> 3)
+            out[2 * i] = v & 0xFF
+            out[2 * i + 1] = v >> 8
+        return bytes(out)
+
+
+MEDIA = Media()
+
+
 class TrayIcon:
     """Icona con suggerimento aggiornato e menu: pagina di collegamento, pannello del dispositivo, esci."""
 
@@ -1480,6 +1675,7 @@ def main():
             ctypes.windll.user32.MessageBoxW(None, message, "Ritmo Code PC Monitor", 0x10)
         sys.exit(1)
     CAL.start()                         # calendario: link dal dispositivo, eventi ogni 5 minuti
+    MEDIA.start()                       # brano in riproduzione per la pagina media del dispositivo
     if args.no_tray:
         server.serve_forever()
         return

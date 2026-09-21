@@ -235,6 +235,18 @@ bool fetchPcStats(const char* host, PcStats& out) {
   out.ccAge  = (int)jnum(s, "cc_ev_age", 0, 9999);
   out.ccBusy = (int)jnum(s, "cc_busy");
   out.actMin = (int)jnum(s, "act_min", 0, -1);
+  out.mediaSt = (int)jnum(s, "media_st", 0, 0);
+  if (out.mediaSt) {
+    jstrv(s, "media_t", out.mediaTitle, sizeof(out.mediaTitle));
+    jstrv(s, "media_a", out.mediaArtist, sizeof(out.mediaArtist));
+    jstrv(s, "media_app", out.mediaApp, sizeof(out.mediaApp));
+    out.mediaPos = (int)jnum(s, "media_pos");
+    out.mediaDur = (int)jnum(s, "media_dur");
+    out.mediaCv  = (int)jnum(s, "media_cv");
+    out.mediaCtl = (int)jnum(s, "media_ctl", 0, 7);
+    int mi = jkey(s, "media_id");
+    out.mediaId = mi < 0 ? 0 : (uint32_t)s.substring(mi).toInt();
+  }
   // calendario: cal_n e, per ogni evento, cal<i>_t (titolo), cal<i>_s / cal<i>_e (epoch)
   out.calN = (int)jnum(s, "cal_n", 0, -1);
   if (out.calN > 3) out.calN = 3;
@@ -343,6 +355,53 @@ bool installFromUrl(const char* url, void (*progress)(int pct), String& err) {
 }
 
 // {"n":..,"ev":[[inizio,fine,tutto_il_giorno,"titolo"],...]} (titoli gia' senza virgolette dal PC Monitor)
+// ---- Pagina media: comandi e copertina dal PC Monitor ----
+bool postPcMedia(const char* host, const char* action, int sec) {
+  if (!host || !host[0]) return false;
+  WiFiClient client;
+  HTTPClient http;
+  if (!http.begin(client, String("http://") + host + "/media")) return false;
+  http.setConnectTimeout(2000);
+  http.setTimeout(2000);
+  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+  int code = http.POST(String("a=") + action + "&s=" + sec);
+  http.end();
+  Serial.printf("[MEDIA] %s -> %d\n", action, code);
+  return code >= 200 && code < 300;
+}
+bool fetchPcCover(const char* host, uint8_t* buf, size_t len, uint32_t* id) {
+  if (!host || !host[0] || !buf) return false;
+  WiFiClient client;
+  HTTPClient http;
+  if (!http.begin(client, String("http://") + host + "/media/cover.bin")) return false;
+  http.setConnectTimeout(2000);
+  http.setTimeout(4000);
+  const char* keys[] = {"X-Media-Id"};
+  http.collectHeaders(keys, 1);
+  int code = http.GET();
+  if (code != 200 || http.getSize() != (int)len) {
+    Serial.printf("[MEDIA] copertina -> %d (%d byte)\n", code, http.getSize());
+    http.end();
+    return false;
+  }
+  if (id) *id = (uint32_t)http.header("X-Media-Id").toInt();
+  WiFiClient* st = http.getStreamPtr();
+  size_t got = 0;
+  uint32_t t0 = millis();
+  while (got < len && millis() - t0 < 5000) {
+    size_t a = st->available();
+    if (a) {
+      int r = st->readBytes(buf + got, a < len - got ? a : len - got);
+      if (r > 0) got += r;
+    } else {
+      if (!http.connected()) break;
+      vTaskDelay(1);                     // niente attese a vuoto: il watchdog del core 0
+    }
+  }
+  http.end();
+  return got == len;
+}
+
 int fetchCalRange(const char* host, CalItem* out, int max) {
   if (!host || !host[0]) return -1;
   WiFiClient client;

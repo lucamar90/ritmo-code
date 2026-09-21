@@ -36,6 +36,7 @@
 #include "logo_assets.h"   // Clawd + logotipo ufficiali (generato da tools/gen_logo_assets.py)
 struct NoticeText;                 // avviso a schermo intero (prototipi generati da Arduino)
 struct AlertRec;                   // voce della cronologia degli avvisi (idem)
+struct CdItem;                     // conto alla rovescia (idem)
 
 // ---- Tema "Terminale": font JetBrains Mono (tools/gen_fonts.sh) ----
 // 12/14 Regular, 22 Medium, 54 ExtraBold (solo cifre e %). I simboli che JetBrains
@@ -265,12 +266,32 @@ static int g_autoBri = 0;
 static int g_brkIdx = 0;
 static const uint8_t BRK_MIN[4] = {0, 45, 60, 90};
 // tasti della tendina (NVS "shbtn"): un bit per tasto, al massimo quattro
-enum { SHB_PAUSE = 0, SHB_TIMER, SHB_LIGHT, SHB_SOUND, SHB_REFRESH, SHB_CAL, SHB_WX, SHB_N };
-static uint8_t g_shBtn = 0x0F;
+enum { SHB_PAUSE = 0, SHB_TIMER, SHB_LIGHT, SHB_SOUND, SHB_REFRESH, SHB_CAL, SHB_WX, SHB_MEDIA, SHB_CD, SHB_N };
+static uint16_t g_shBtn = 0x0F;
 // Claude oggi (NVS "ccd" giorno, "ccn" richieste finite, "cct" secondi di lavoro, "ccx" la piu' lunga)
 static long g_ccDay = 0;
 static int  g_ccN = 0;
 static uint32_t g_ccT = 0, g_ccX = 0;
+// ---- Media in riproduzione sul PC (PC Monitor 1.8): pagina a tutto schermo con copertina 160x160 ----
+#define MC_N 160
+static bool g_mediaAuto = true;                  // la pagina si apre da sola quando parte la riproduzione (NVS "mauto")
+static bool g_mediaFast = false;                 // pagina aperta: il PC si legge ogni secondo
+static uint8_t *g_mcImg = nullptr, *g_mcTmp = nullptr;   // copertina (PSRAM): mostrata / in arrivo dal task extra
+static lv_image_dsc_t g_mcDsc;
+static bool g_mcHave = false;
+static uint32_t g_mcId = 0, g_mcWant = 0, g_mcGot = 0, g_mcPosAtMs = 0;
+static volatile bool g_mcReq = false, g_mcDone = false, g_mcOk = false, g_mcActReq = false;
+static char g_mcHost[48], g_mcAct[10];
+static int g_mcSec = 0;
+// ---- Conto alla rovescia verso una data (NVS "cd0".."cd2": "epoch|titolo"), dal dispositivo o dal browser ----
+struct CdItem { uint32_t at; char title[44]; };
+#define CD_MAX 3
+static CdItem g_cd[CD_MAX];
+static int g_cdN = 0, g_cdSel = 0;
+static bool g_cdAlerted[CD_MAX];
+static void cd_load();
+static void cd_view_refresh();                  // ridisegna la pagina se e' aperta
+static bool g_cdOpen = false;                   // conto alla rovescia o editor aperti
 
 static uint32_t g_lastPollMs = 0;         // millis dell'ultimo poll (per la barra di refresh)
 static int g_pollSec = DEFAULT_POLL_SEC;  // intervallo di aggiornamento (config, NVS)
@@ -334,6 +355,8 @@ static const uint16_t PC_INT_S[4] = {1, 3, 5, 60};
 static uint32_t g_pcHistAtMs = 0;
 // il PC e' considerato spento se non risponde da 3 letture (almeno 20 s)
 static uint32_t pc_stale_ms() { uint32_t m = 3000UL * PC_INT_S[g_pcIntIdx]; return m < 20000UL ? 20000UL : m; }
+static uint32_t pc_int_ms() { return g_mediaFast ? 1000UL : PC_INT_S[g_pcIntIdx] * 1000UL; }
+static void pc_poll_in(uint32_t ms) { g_pcTryMs = millis() + ms + 50 - pc_int_ms(); }   // prossima lettura tra ms
 static uint8_t g_pcHist[3][PC_HIST];               // cpu, gpu, ram in %
 static int g_pcHistN = 0;
 static lv_point_precise_t g_pcSparkPts[3][PC_HIST];   // una sola connessione TLS alla volta (RAM interna)
@@ -900,12 +923,14 @@ static void load_persisted() {
   if (g_autoBri < 0 || g_autoBri > 3) g_autoBri = 0;
   g_brkIdx = g_prefs.getInt("brk", 0);
   if (g_brkIdx < 0 || g_brkIdx > 3) g_brkIdx = 0;
-  g_shBtn = (uint8_t)g_prefs.getUInt("shbtn", 0x0F);
+  g_shBtn = (uint16_t)g_prefs.getUInt("shbtn", 0x0F);
   if (!g_shBtn || g_shBtn >= (1 << SHB_N)) g_shBtn = 0x0F;
   g_ccDay = g_prefs.getLong("ccd", 0);
   g_ccN = g_prefs.getInt("ccn", 0);
   g_ccT = g_prefs.getUInt("cct", 0);
   g_ccX = g_prefs.getUInt("ccx", 0);
+  g_mediaAuto = g_prefs.getBool("mauto", true);
+  cd_load();
   if (g_briIdx < 0 || g_briIdx > 2) g_briIdx = 1;
   g_pollSec = g_prefs.getInt("poll", DEFAULT_POLL_SEC);
   if (g_pollSec < MIN_POLL_SEC || g_pollSec > MAX_POLL_SEC) g_pollSec = DEFAULT_POLL_SEC;
@@ -1896,6 +1921,21 @@ static String home_page(const String &msg, bool ok) {
   h += F("'>");
   if (g_ical[0]) h += F("<label><input type=checkbox name=icaldel value=1 style='width:auto;margin-right:6px'>rimuovi il calendario</label>");
   h += F("<p style='font-size:12px;color:var(--mut)'>Il link lo legge solo il PC collegato (Ritmo Code PC Monitor), che scarica gli eventi ogni 5 minuti.</p>");
+  h += F("<h2 id=cd>conto alla rovescia</h2><p style='font-size:12px;color:var(--mut)'>Fino a tre date, con nome e giorno/ora. "
+         "Svuota il nome per togliere una riga. Sul dispositivo: tendina &rarr; conto.</p><input type=hidden name=cdform value=1>");
+  for (int i = 0; i < CD_MAX; i++) {
+    char nm[8], dt[24];
+    snprintf(nm, sizeof(nm), "%d", i);
+    dt[0] = 0;
+    if (i < g_cdN) { time_t t = g_cd[i].at; struct tm v; localtime_r(&t, &v);
+      snprintf(dt, sizeof(dt), "%04d-%02d-%02dT%02d:%02d", v.tm_year + 1900, v.tm_mon + 1, v.tm_mday, v.tm_hour, v.tm_min); }
+    h += F("<div class=row style='margin-top:8px'><input style='flex:1' maxlength=40 autocomplete=off placeholder='nome' name=cdt");
+    h += nm; h += F(" value='");
+    if (i < g_cdN) for (const char *q = g_cd[i].title; *q; q++) {
+      if (*q == '\'') h += F("&#39;"); else if (*q == '&') h += F("&amp;"); else if (*q == '<') h += F("&lt;"); else h += *q;
+    }
+    h += F("'><input type=datetime-local style='max-width:215px' name=cdd"); h += nm; h += F(" value='"); h += dt; h += F("'></div>");
+  }
   h += F("<h2>salva</h2><label for=pin>PIN del dispositivo</label>"
          "<input id=pin name=pin type=password inputmode=numeric maxlength=4 autocomplete=off>"
          "<button type=submit>Salva</button></form><p><a href='/'>&larr; pannello</a></p>"
@@ -2021,6 +2061,27 @@ static void handleHomePost() {
     String k = g_web->arg("kwh"); k.replace(',', '.');
     float price = k.toFloat();
     if (price >= 0 && price < 5) { g_kwhPrice = price; g_prefs.putFloat("kwh", g_kwhPrice); }
+  }
+  if (g_web->hasArg("cdform")) {                       // conti alla rovescia: le righe con nome e data valida
+    int n = 0;
+    for (int i = 0; i < CD_MAX; i++) {
+      String t = g_web->arg(String("cdt") + i), d = g_web->arg(String("cdd") + i);
+      t.trim();
+      String clean;
+      for (size_t k = 0; k < t.length() && clean.length() < sizeof(g_cd[0].title) - 1; k++) {
+        char ch = t[k];
+        if (ch != '|' && ch != '"' && ch != '<' && ch != '>' && ch != '\\' && (uint8_t)ch >= 0x20) clean += ch;
+      }
+      struct tm v = {};
+      if (!clean.length() || sscanf(d.c_str(), "%d-%d-%dT%d:%d", &v.tm_year, &v.tm_mon, &v.tm_mday, &v.tm_hour, &v.tm_min) != 5) continue;
+      v.tm_year -= 1900; v.tm_mon -= 1; v.tm_isdst = -1;
+      g_cd[n].at = (uint32_t)mktime(&v);
+      strlcpy(g_cd[n].title, clean.c_str(), sizeof(g_cd[n].title));
+      n++;
+    }
+    g_cdN = n; g_cdSel = 0;
+    cd_save();
+    cd_view_refresh();
   }
   if (g_web->hasArg("icaldel")) { g_ical[0] = 0; g_prefs.putString("ical", ""); g_calN = 0; }
   else if (g_web->hasArg("ical")) {
@@ -4140,7 +4201,7 @@ static void moment_tick() {
 // Avviso a schermo intero con Clawd: Claude Code, timer e pomodoro.
 // Resta finche' non lo tocchi (o scade), sopravvive ai rebuild del dashboard.
 // ============================================================
-enum { NT_NONE = 0, NT_CLAUDE, NT_TIMER, NT_CAL, NT_BRK };
+enum { NT_NONE = 0, NT_CLAUDE, NT_TIMER, NT_CAL, NT_BRK, NT_CD };
 struct NoticeUI { lv_obj_t *scrim, *box, *frame, *ask; uint32_t t0, col, maxMs; int kind; bool hop, idle; };
 static NoticeUI g_nt = {};
 static int g_ntPend = NT_NONE;                 // avviso da mostrare appena si puo'
@@ -4800,6 +4861,510 @@ static void al_line(int i, char *out, size_t sz, uint32_t *col) {
   *col = r.nt.col;
 }
 
+// ---- Pagina media: brano in riproduzione sul PC (Spotify, browser, lettori), comandi e copertina ----
+struct MediaUI { lv_obj_t *scr, *img, *ph, *app, *state, *title, *artist, *fill, *knob, *tPos, *tDur, *playLbl; uint32_t id; };
+static MediaUI g_mv = {};
+static bool g_mvAutoPend = false;               // la riproduzione e' partita: apri appena si puo'
+static void media_view_close() {
+  if (g_mv.scr) { lv_obj_delete(g_mv.scr); memset(&g_mv, 0, sizeof(g_mv)); }
+  g_mediaFast = false;
+}
+static bool media_pc_ok() { return g_pcAtMs && millis() - g_pcAtMs <= pc_stale_ms(); }
+static int media_pos_now() {
+  int p = g_pc.mediaPos;
+  if (g_pc.mediaSt == 1) p += (int)((millis() - g_mcPosAtMs) / 1000);
+  if (g_pc.mediaDur > 0 && p > g_pc.mediaDur) p = g_pc.mediaDur;
+  return p < 0 ? 0 : p;
+}
+static void mmss(int s, char *o, size_t n) {
+  if (s < 0) s = 0;
+  if (s >= 3600) snprintf(o, n, "%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60);
+  else snprintf(o, n, "%d:%02d", s / 60, s % 60);
+}
+static void media_view_progress() {
+  if (!g_mv.scr) return;
+  int dur = media_pc_ok() && g_pc.mediaSt ? g_pc.mediaDur : 0, pos = dur ? media_pos_now() : 0;
+  int w = dur > 0 ? (int)((long)252 * pos / dur) : 0;
+  lv_obj_set_width(g_mv.fill, w);
+  lv_obj_set_x(g_mv.knob, w < 5 ? 0 : (w > 247 ? 242 : w - 5));
+  char a[12], b[12];
+  mmss(pos, a, sizeof(a));
+  if (dur > 0) mmss(dur, b, sizeof(b)); else strcpy(b, "--:--");
+  label_set(g_mv.tPos, dur > 0 ? a : "--:--");
+  label_set(g_mv.tDur, b);
+}
+static void media_view_update(bool coverChanged) {
+  if (!g_mv.scr) return;
+  bool pc = media_pc_ok();
+  int st = pc ? g_pc.mediaSt : 0;
+  char b[80];
+  if (st) {
+    snprintf(b, sizeof(b), " /%s", g_pc.mediaApp);
+    for (char *q = b; *q; q++) if (*q >= 'A' && *q <= 'Z') *q += 32;
+  } else strcpy(b, "");
+  label_set(g_mv.app, b);
+  if (!pc)      { label_set(g_mv.title, TRS("pc non collegato", "pc not connected")); label_set(g_mv.artist, TRS("serve Ritmo Code PC Monitor 1.8", "needs Ritmo Code PC Monitor 1.8")); }
+  else if (!st) { label_set(g_mv.title, TRS("niente in riproduzione", "nothing playing")); label_set(g_mv.artist, TRS("avvia Spotify, un video o un brano sul pc", "start Spotify, a video or a song on the pc")); }
+  else          { label_set(g_mv.title, g_pc.mediaTitle); label_set(g_mv.artist, g_pc.mediaArtist[0] ? g_pc.mediaArtist : g_pc.mediaApp); }
+  label_color(g_mv.title, st ? C_TEXT : C_MUTED);
+  label_set(g_mv.state, st == 1 ? TRS("in riproduzione", "playing") : st == 2 ? TRS("in pausa", "paused") : "");
+  label_color(g_mv.state, st == 1 ? C_OK : C_WARN);
+  label_set(g_mv.playLbl, st == 1 ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY);
+  bool show = st && g_pc.mediaCv && g_mcHave && g_mcId == g_pc.mediaId;
+  if (show && (coverChanged || g_mv.id != g_mcId)) { lv_image_set_src(g_mv.img, &g_mcDsc); g_mv.id = g_mcId; lv_obj_invalidate(g_mv.img); }
+  if (show) { lv_obj_remove_flag(g_mv.img, LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(g_mv.ph, LV_OBJ_FLAG_HIDDEN); }
+  else      { lv_obj_add_flag(g_mv.img, LV_OBJ_FLAG_HIDDEN); lv_obj_remove_flag(g_mv.ph, LV_OBJ_FLAG_HIDDEN); }
+  media_view_progress();
+}
+static void media_send(const char *a, int sec) {
+  if (!g_pcHost[0]) return;
+  strlcpy(g_mcHost, g_pcHost, sizeof(g_mcHost));
+  strlcpy(g_mcAct, a, sizeof(g_mcAct));
+  g_mcSec = sec;
+  g_mcActReq = true;
+  pc_poll_in(700);                                 // rilegge subito lo stato dopo il comando
+}
+static void media_cb(lv_event_t *e) {
+  int a = (int)(intptr_t)lv_event_get_user_data(e);
+  switch (a) {
+    case -1: g_mvAutoPend = false; media_view_close(); return;
+    case 1: media_send("prev", 0); break;
+    case 2:                                          // play/pausa: l'icona cambia subito
+      media_send("toggle", 0);
+      if (g_pc.mediaSt) { g_pc.mediaPos = media_pos_now(); g_mcPosAtMs = millis(); g_pc.mediaSt = g_pc.mediaSt == 1 ? 2 : 1; }
+      media_view_update(false);
+      break;
+    case 3: media_send("next", 0); break;
+    case 4: media_send("voldown", 0); break;
+    case 5: media_send("mute", 0); break;
+    case 6: media_send("volup", 0); break;
+    case 7: {                                        // tocca la barra per spostarti nel brano
+      if (g_pc.mediaDur <= 0 || !g_pc.mediaSt) break;
+      lv_point_t pt; lv_indev_get_point(lv_indev_active(), &pt);
+      lv_area_t ar; lv_obj_get_coords((lv_obj_t *)lv_event_get_target(e), &ar);
+      int w = lv_area_get_width(&ar), x = pt.x - ar.x1;
+      if (x < 0) x = 0;
+      if (x > w) x = w;
+      int sec = (int)((long)g_pc.mediaDur * x / (w ? w : 1));
+      media_send("seek", sec);
+      g_pc.mediaPos = sec; g_mcPosAtMs = millis();
+      media_view_progress();
+      break;
+    }
+  }
+}
+static void media_view_open() {
+  if (g_mv.scr) { media_view_update(false); return; }
+  lv_obj_t *s = plain_obj(lv_layer_top());
+  g_mv.scr = s;
+  g_mediaFast = true;
+  lv_obj_set_size(s, 480, 320);
+  lv_obj_set_style_bg_color(s, lv_color_hex(C_BG), 0);
+  lv_obj_set_style_bg_opa(s, LV_OPA_COVER, 0);
+  lv_obj_add_flag(s, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_t *hd = trow(s, 13, 11);                   // testata: ✻ media /spotify
+  mklabel(hd, U_SPARK " ", F14, C_ACCENT);
+  mklabel(hd, "media", F14, C_TEXT);
+  g_mv.app = mklabel(hd, "", F14, C_FAINT);
+  tbtn(s, 378, 5, 89, 32, TRS(U_LEFT " chiudi", U_LEFT " close"), F14, C_MUTED, C_BORDER, media_cb, (void *)(intptr_t)-1);
+  hline(s, 13, 42, 454, C_BORDER);
+  // copertina, o un riquadro con la nota finche' non arriva
+  g_mv.ph = rrect(s, 24, 58, MC_N, MC_N, 6, C_SURFACE);
+  lv_obj_center(mklabel(g_mv.ph, LV_SYMBOL_AUDIO, &lv_font_montserrat_28, C_FAINT));
+  g_mv.img = lv_image_create(s);
+  lv_obj_set_pos(g_mv.img, 24, 58);
+  lv_obj_set_size(g_mv.img, MC_N, MC_N);
+  lv_obj_add_flag(g_mv.img, LV_OBJ_FLAG_HIDDEN);
+  g_mv.state = tstatic(s, "", F12, C_OK, 24, 230);
+  // titolo (due righe), artista, barra, tempi
+  g_mv.title = tstatic(s, "", F22, C_TEXT, 204, 56);
+  lv_obj_set_size(g_mv.title, 252, 58);
+  lv_label_set_long_mode(g_mv.title, LV_LABEL_LONG_DOT);
+  g_mv.artist = tstatic(s, "", F14, C_MUTED, 204, 118);
+  lv_obj_set_width(g_mv.artist, 252);
+  lv_label_set_long_mode(g_mv.artist, LV_LABEL_LONG_DOT);
+  lv_obj_t *bar = plain_obj(s);
+  lv_obj_set_pos(bar, 204, 146);
+  lv_obj_set_size(bar, 252, 26);
+  lv_obj_add_flag(bar, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_ext_click_area(bar, 6);
+  lv_obj_add_event_cb(bar, media_cb, LV_EVENT_CLICKED, (void *)(intptr_t)7);
+  rrect(bar, 0, 11, 252, 4, 2, C_BORDER);
+  g_mv.fill = rrect(bar, 0, 11, 0, 4, 2, C_TEXT);
+  g_mv.knob = rrect(bar, 0, 8, 10, 10, 5, C_TEXT);
+  g_mv.tPos = tstatic(s, "", F12, C_MUTED, 204, 174);
+  g_mv.tDur = tstatic(s, "", F12, C_MUTED, 204, 174);
+  lv_obj_set_width(g_mv.tDur, 252);
+  lv_obj_set_style_text_align(g_mv.tDur, LV_TEXT_ALIGN_RIGHT, 0);
+  // comandi: indietro, play/pausa (tondo pieno), avanti; sotto il volume del PC
+  tbtn(s, 210, 200, 70, 50, LV_SYMBOL_PREV, &lv_font_montserrat_22, C_TEXT, C_BORDER, media_cb, (void *)(intptr_t)1);
+  lv_obj_t *pb = tbtn(s, 290, 198, 80, 54, LV_SYMBOL_PLAY, &lv_font_montserrat_28, C_BG, C_TEXT, media_cb, (void *)(intptr_t)2);
+  lv_obj_set_style_bg_color(pb, lv_color_hex(C_TEXT), 0);
+  lv_obj_set_style_bg_opa(pb, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(pb, 27, 0);
+  g_mv.playLbl = lv_obj_get_child(pb, 0);
+  tbtn(s, 380, 200, 70, 50, LV_SYMBOL_NEXT, &lv_font_montserrat_22, C_TEXT, C_BORDER, media_cb, (void *)(intptr_t)3);
+  tbtn(s, 210, 264, 70, 38, LV_SYMBOL_VOLUME_MID " -", F14, C_MUTED, C_BORDER, media_cb, (void *)(intptr_t)4);
+  tbtn(s, 290, 264, 80, 38, LV_SYMBOL_MUTE, F14, C_MUTED, C_BORDER, media_cb, (void *)(intptr_t)5);
+  tbtn(s, 380, 264, 70, 38, LV_SYMBOL_VOLUME_MAX " +", F14, C_MUTED, C_BORDER, media_cb, (void *)(intptr_t)6);
+  tstatic(s, TRS("volume del pc", "pc volume"), F12, C_FAINT, 24, 276);
+  media_view_update(true);
+  pc_poll_in(0);
+}
+// si apre da sola solo sul dashboard, a schermo acceso e senza altre finestre sopra
+static bool media_can_auto() {
+  return g_state == ST_MAIN && g_screenMode <= 1 && !g_mv.scr && !g_shade && !g_calView && !g_wxWeek && !g_nt.scrim &&
+         !g_mo.scrim && !g_tmMenu && !g_pauseMenu && !g_cdOpen;
+}
+// ogni lettura del PC: copertina nuova, apertura automatica, pagina aggiornata
+static void media_on_pc() {
+  static int prevSt = 0;
+  g_mcPosAtMs = millis();
+  int st = g_pc.mediaSt;
+  if (st && g_pc.mediaCv && g_pc.mediaId && g_pc.mediaId != g_mcId && g_pc.mediaId != g_mcWant && !g_mcReq && !g_mcDone && g_pcHost[0]) {
+    g_mcWant = g_pc.mediaId;
+    strlcpy(g_mcHost, g_pcHost, sizeof(g_mcHost));
+    g_mcReq = true;
+  }
+  if (st == 1 && prevSt != 1) g_mvAutoPend = g_mediaAuto;
+  if (st != 1) g_mvAutoPend = false;
+  prevSt = st;
+  if (g_mvAutoPend && media_can_auto()) { g_mvAutoPend = false; media_view_open(); Serial.println("[MEDIA] riproduzione: pagina aperta"); }
+  media_view_update(false);
+}
+
+// ---- Conto alla rovescia: fino a tre date, dal dispositivo o dal browser (/home) ----
+static void cd_save() {
+  for (int i = 0; i < CD_MAX; i++) {
+    char k[6]; snprintf(k, sizeof(k), "cd%d", i);
+    if (i < g_cdN) {
+      char v[64]; snprintf(v, sizeof(v), "%u|%s", (unsigned)g_cd[i].at, g_cd[i].title);
+      g_prefs.putString(k, v);
+    } else if (g_prefs.isKey(k)) g_prefs.remove(k);
+  }
+  time_t now = time(nullptr);
+  for (int i = 0; i < CD_MAX; i++) g_cdAlerted[i] = i < g_cdN && now > 1000000000L && (time_t)g_cd[i].at <= now;
+}
+static void cd_load() {
+  g_cdN = 0;
+  for (int i = 0; i < CD_MAX; i++) {
+    char k[6]; snprintf(k, sizeof(k), "cd%d", i);
+    if (!g_prefs.isKey(k)) continue;
+    String v = g_prefs.getString(k, "");
+    int bar = v.indexOf('|');
+    if (bar <= 0) continue;
+    CdItem &c = g_cd[g_cdN++];
+    c.at = (uint32_t)strtoul(v.substring(0, bar).c_str(), nullptr, 10);
+    strlcpy(c.title, v.substring(bar + 1).c_str(), sizeof(c.title));
+  }
+}
+// numero grande, unita' e riga sotto: "12" "giorni" "5 ore e 3 minuti"
+static void cd_parts(const CdItem &c, time_t now, char *big, char *unit, char *sub, size_t n) {
+  long d = (long)c.at - (long)now;
+  big[0] = unit[0] = sub[0] = 0;
+  if (d > 0) {
+    long days = d / 86400, hrs = d % 86400 / 3600, mins = d % 3600 / 60, secs = d % 60;
+    if (days >= 1) {
+      snprintf(big, n, "%ld", days); strlcpy(unit, days == 1 ? TRS(" giorno", " day") : TRS(" giorni", " days"), n);
+      snprintf(sub, n, TRS("e %ld ore, %ld minuti", "and %ld hours, %ld minutes"), hrs, mins);
+    } else if (hrs >= 1) {
+      snprintf(big, n, "%ld", hrs); strlcpy(unit, hrs == 1 ? TRS(" ora", " hour") : TRS(" ore", " hours"), n);
+      snprintf(sub, n, TRS("e %ld minuti, %02ld secondi", "and %ld minutes, %02ld seconds"), mins, secs);
+    } else {
+      snprintf(big, n, "%ld", mins); strlcpy(unit, mins == 1 ? TRS(" minuto", " minute") : TRS(" minuti", " minutes"), n);
+      snprintf(sub, n, TRS("e %02ld secondi", "and %02ld seconds"), secs);
+    }
+  } else {
+    long ago = -d;
+    if (ago < 86400) { strlcpy(unit, TRS("ci siamo!", "it's here!"), n); strlcpy(sub, TRS("e' oggi", "it's today"), n); }
+    else { snprintf(big, n, "%ld", ago / 86400); strlcpy(unit, TRS(" giorni fa", " days ago"), n); strlcpy(sub, TRS("gia' passato", "already past"), n); }
+  }
+}
+// forma breve per tendina e schede: "12 gg", "5 h", "42 min", "oggi", "-3 gg"
+static void cd_short(const CdItem &c, time_t now, char *o, size_t n) {
+  long d = (long)c.at - (long)now;
+  if (d > 86400) snprintf(o, n, TRS("%ld gg", "%ld d"), d / 86400);
+  else if (d > 3600) snprintf(o, n, "%ld h", d / 3600);
+  else if (d > 0) snprintf(o, n, "%ld min", (d + 59) / 60);
+  else if (d > -86400) strlcpy(o, TRS("oggi", "today"), n);
+  else snprintf(o, n, TRS("-%ld gg", "-%ld d"), -d / 86400);
+}
+// il piu' vicino nel futuro (altrimenti il primo), per la tendina
+static int cd_next(time_t now) {
+  int best = -1;
+  for (int i = 0; i < g_cdN; i++)
+    if ((time_t)g_cd[i].at > now && (best < 0 || g_cd[i].at < g_cd[best].at)) best = i;
+  return best >= 0 ? best : (g_cdN ? 0 : -1);
+}
+static void cd_date(uint32_t at, char *o, size_t n) {
+  static const char *GI[7] = {"domenica", "luned\xC3\xAC", "marted\xC3\xAC", "mercoled\xC3\xAC", "gioved\xC3\xAC", "venerd\xC3\xAC", "sabato"};
+  static const char *GE[7] = {"sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"};
+  static const char *MI[12] = {"gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno", "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre"};
+  static const char *ME[12] = {"january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"};
+  time_t t = at; struct tm v; localtime_r(&t, &v);
+  snprintf(o, n, "%s %d %s %d " U_MIDDOT " %02d:%02d", (g_lang ? GE : GI)[v.tm_wday], v.tm_mday, (g_lang ? ME : MI)[v.tm_mon],
+           v.tm_year + 1900, v.tm_hour, v.tm_min);
+}
+static int g_cdShow = -1;                        // avviso "ci siamo" da mostrare
+static void cd_show() {
+  if (g_cdShow < 0 || g_cdShow >= g_cdN) return;
+  const CdItem &c = g_cd[g_cdShow];
+  NoticeText n = {};
+  n.kind = NT_CD; n.col = C_ACCENT; n.hop = true; n.maxMs = 10UL * 60UL * 1000UL; n.big = -1;
+  strcpy(n.ev, "cycle");
+  strlcpy(n.legend, TRS("conto alla rovescia", "countdown"), sizeof(n.legend));
+  strlcpy(n.top, TRS("ci siamo", "it's time"), sizeof(n.top));
+  strlcpy(n.word, TRS("adesso", "now"), sizeof(n.word));
+  strlcpy(n.msg, c.title, sizeof(n.msg));
+  char d[48]; cd_date(c.at, d, sizeof(d));
+  strlcpy(n.foot, d, sizeof(n.foot));
+  notice_show(n);
+}
+// ogni secondo: avviso quando un conto arriva a zero (una volta, entro due minuti)
+static void cd_tick() {
+  time_t now = time(nullptr);
+  if (now < 1000000000L || !g_cdN) return;
+  static bool init = false;
+  if (!init) { init = true; for (int i = 0; i < g_cdN; i++) g_cdAlerted[i] = (time_t)g_cd[i].at <= now; }
+  for (int i = 0; i < g_cdN; i++) {
+    if (g_cdAlerted[i] || (time_t)g_cd[i].at > now) continue;
+    g_cdAlerted[i] = true;
+    if (now - (time_t)g_cd[i].at > 120 || g_ntPend) continue;
+    g_cdShow = i; g_ntPend = NT_CD; g_ntT0 = 0;
+    Serial.printf("[CONTO] ci siamo: %s\n", g_cd[i].title);
+  }
+}
+
+struct CdUI { lv_obj_t *scr, *big, *unit, *sub; };
+static CdUI g_cdv = {};
+static bool g_cdDelArm = false;
+static bool g_cdEditOpen = false;
+static void cd_view_close() { if (g_cdv.scr) { lv_obj_delete(g_cdv.scr); memset(&g_cdv, 0, sizeof(g_cdv)); } g_cdOpen = g_cdEditOpen; }
+static void cd_view_build();
+static void cd_edit_open(int slot);
+static void cd_cb(lv_event_t *e) {
+  int a = (int)(intptr_t)lv_event_get_user_data(e);
+  if (a == -1) { g_cdDelArm = false; cd_view_close(); return; }
+  if (a >= 0 && a < CD_MAX) { g_cdSel = a; g_cdDelArm = false; cd_view_build(); return; }
+  if (a == 10) { cd_edit_open(-1); return; }
+  if (a == 11 && g_cdN) { cd_edit_open(g_cdSel); return; }
+  if (a == 12 && g_cdN) {
+    if (!g_cdDelArm) { g_cdDelArm = true; cd_view_build(); return; }
+    for (int i = g_cdSel; i < g_cdN - 1; i++) g_cd[i] = g_cd[i + 1];
+    g_cdN--; g_cdSel = 0; g_cdDelArm = false;
+    cd_save();
+    cd_view_build();
+  }
+}
+static void cd_view_refresh() { if (g_cdv.scr) cd_view_build(); }
+static void cd_view_tick() {
+  if (!g_cdv.scr || !g_cdv.big || !g_cdN) return;
+  time_t now = time(nullptr);
+  if (now < 1000000000L) return;
+  char big[48], unit[48], sub[48];
+  cd_parts(g_cd[g_cdSel], now, big, unit, sub, sizeof(sub));
+  label_set(g_cdv.big, big);
+  label_set(g_cdv.unit, unit);
+  label_set(g_cdv.sub, sub);
+}
+static void cd_view_build() {
+  cd_view_close();
+  g_cdOpen = true;
+  lv_obj_t *s = plain_obj(lv_layer_top());
+  g_cdv.scr = s;
+  lv_obj_set_size(s, 480, 320);
+  lv_obj_set_style_bg_color(s, lv_color_hex(C_BG), 0);
+  lv_obj_set_style_bg_opa(s, LV_OPA_COVER, 0);
+  lv_obj_add_flag(s, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_t *hd = trow(s, 13, 11);
+  mklabel(hd, U_SPARK " ", F14, C_ACCENT);
+  mklabel(hd, TRS("conto alla rovescia", "countdown"), F14, C_TEXT);
+  tbtn(s, 378, 5, 89, 32, TRS(U_LEFT " chiudi", U_LEFT " close"), F14, C_MUTED, C_BORDER, cd_cb, (void *)(intptr_t)-1);
+  hline(s, 13, 42, 454, C_BORDER);
+  time_t now = time(nullptr);
+  if (!g_cdN) {
+    lv_obj_t *l = tstatic(s, TRS("nessun conto alla rovescia", "no countdowns yet"), F22, C_MUTED, 0, 96);
+    lv_obj_set_width(l, 480); lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+    char h[96];
+    if (g_wifi.isConnected()) snprintf(h, sizeof(h), TRS("aggiungilo qui o dal browser: http://%s/home", "add one here or from the browser: http://%s/home"), WiFi.localIP().toString().c_str());
+    else strlcpy(h, TRS("aggiungilo qui o dal browser, pagina /home", "add one here or from the browser, page /home"), sizeof(h));
+    l = tstatic(s, h, F12, C_FAINT, 0, 132);
+    lv_obj_set_width(l, 480); lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+    tbtn(s, 170, 176, 140, 44, TRS("+ nuovo", "+ new"), F14, C_ACCENT, C_ACCENT, cd_cb, (void *)(intptr_t)10);
+    return;
+  }
+  if (g_cdSel >= g_cdN) g_cdSel = 0;
+  const CdItem &c = g_cd[g_cdSel];
+  lv_obj_t *t = tstatic(s, c.title, F22, C_TEXT, 24, 54);
+  lv_obj_set_width(t, 432); lv_label_set_long_mode(t, LV_LABEL_LONG_DOT);
+  lv_obj_t *row = trow(s, 24, 84);
+  g_cdv.big = mklabel(row, "", F54, C_ACCENT);
+  g_cdv.unit = mklabel(row, "", F22, C_ACCENT);
+  lv_obj_set_style_pad_bottom(g_cdv.unit, 9, 0);
+  g_cdv.sub = tstatic(s, "", F14, C_MUTED, 24, 150);
+  char d[64]; cd_date(c.at, d, sizeof(d));
+  tstatic(s, d, F12, C_FAINT, 24, 174);
+  // schede: una per conto, poi "+ nuovo"
+  for (int i = 0; i < g_cdN; i++) {
+    bool sel = i == g_cdSel;
+    lv_obj_t *b = tbtn(s, 24 + i * 112, 204, 104, 46, "", F12, C_TEXT, sel ? C_ACCENT : C_BORDER, cd_cb, (void *)(intptr_t)i);
+    lv_obj_t *n = lv_obj_get_child(b, 0);
+    lv_label_set_text(n, g_cd[i].title);
+    lv_obj_set_width(n, 94); lv_label_set_long_mode(n, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_align(n, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_color(n, lv_color_hex(sel ? C_TEXT : C_MUTED), 0);
+    lv_obj_align(n, LV_ALIGN_TOP_MID, 0, 5);
+    char sh[16]; cd_short(g_cd[i], now, sh, sizeof(sh));
+    lv_obj_t *st = mklabel(b, sh, F12, sel ? C_ACCENT : C_FAINT);
+    lv_obj_align(st, LV_ALIGN_BOTTOM_MID, 0, -5);
+  }
+  if (g_cdN < CD_MAX) tbtn(s, 24 + g_cdN * 112, 204, 104, 46, TRS("+ nuovo", "+ new"), F14, C_ACCENT, C_BORDER, cd_cb, (void *)(intptr_t)10);
+  tbtn(s, 24, 266, 120, 38, TRS("modifica", "edit"), F14, C_TEXT, C_BORDER, cd_cb, (void *)(intptr_t)11);
+  tbtn(s, 152, 266, 120, 38, g_cdDelArm ? TRS("conferma", "confirm") : TRS("elimina", "delete"), F14,
+       g_cdDelArm ? C_BAD : C_MUTED, g_cdDelArm ? C_BAD : C_BORDER, cd_cb, (void *)(intptr_t)12);
+  cd_view_tick();
+}
+
+// ---- Editor: nome con la tastiera, poi giorno/mese/anno/ora/minuti con + e - ----
+struct CdEdit { lv_obj_t *scr, *ta, *val[5], *prev; int slot, step; char title[44]; struct tm t; };
+static CdEdit g_cde = {};
+static void cd_edit_close() { if (g_cde.scr) { lv_obj_delete(g_cde.scr); g_cde.scr = nullptr; } g_cdEditOpen = false; g_cdOpen = g_cdv.scr != nullptr; }
+static void cd_edit_build();
+static void cd_edit_values() {
+  if (!g_cde.scr || g_cde.step != 1) return;
+  const struct tm &t = g_cde.t;
+  int v[5] = {t.tm_mday, t.tm_mon + 1, t.tm_year + 1900, t.tm_hour, t.tm_min};
+  for (int i = 0; i < 5; i++) {
+    char b[8]; snprintf(b, sizeof(b), i == 2 ? "%d" : "%02d", v[i]);
+    label_set(g_cde.val[i], b);
+  }
+  struct tm tt = g_cde.t; tt.tm_isdst = -1;
+  CdItem c = {(uint32_t)mktime(&tt), ""};
+  char d[64], sh[16], p[96];
+  cd_date(c.at, d, sizeof(d));
+  cd_short(c, time(nullptr), sh, sizeof(sh));
+  snprintf(p, sizeof(p), "%s  " U_RIGHT " %s", d, sh);
+  label_set(g_cde.prev, p);
+}
+static void cd_edit_kb_cb(lv_event_t *e) {
+  lv_event_code_t code = lv_event_get_code(e);
+  if (code == LV_EVENT_READY) {
+    String t = lv_textarea_get_text(g_cde.ta);
+    t.trim();
+    String clean;
+    for (size_t i = 0; i < t.length() && clean.length() < sizeof(g_cde.title) - 1; i++) {
+      char ch = t[i];
+      if (ch != '|' && ch != '"' && ch != '<' && ch != '>' && ch != '\\' && (uint8_t)ch >= 0x20) clean += ch;
+    }
+    strlcpy(g_cde.title, clean.length() ? clean.c_str() : TRS("evento", "event"), sizeof(g_cde.title));
+    g_cde.step = 1;
+    cd_edit_build();
+  } else if (code == LV_EVENT_CANCEL) {
+    cd_edit_close();
+  }
+}
+static void cd_edit_cb(lv_event_t *e) {
+  int a = (int)(intptr_t)lv_event_get_user_data(e);
+  if (a == -1) { cd_edit_close(); return; }
+  if (a == -2) { g_cde.step = 0; cd_edit_build(); return; }        // torna al nome
+  if (a == -3) {                                                   // salva
+    struct tm tt = g_cde.t; tt.tm_isdst = -1;
+    CdItem c; c.at = (uint32_t)mktime(&tt);
+    strlcpy(c.title, g_cde.title, sizeof(c.title));
+    if (g_cde.slot >= 0 && g_cde.slot < g_cdN) { g_cd[g_cde.slot] = c; g_cdSel = g_cde.slot; }
+    else if (g_cdN < CD_MAX) { g_cd[g_cdN] = c; g_cdSel = g_cdN++; }
+    cd_save();
+    Serial.printf("[CONTO] salvato: %s (%u)\n", c.title, (unsigned)c.at);
+    cd_edit_close();
+    cd_view_build();
+    return;
+  }
+  // campi: 0 giorno, 1 mese, 2 anno, 3 ora, 4 minuti; a = 20 + campo * 2 + (piu' ? 1 : 0)
+  int f = (a - 20) / 2, dir = ((a - 20) % 2) ? 1 : -1;
+  struct tm &t = g_cde.t;
+  static const uint8_t DAYS[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  switch (f) {
+    case 0: t.tm_mday += dir; break;
+    case 1: t.tm_mon += dir; break;
+    case 2: t.tm_year += dir; break;
+    case 3: t.tm_hour += dir; break;
+    case 4: t.tm_min += dir * 5; break;
+  }
+  if (f == 1 || f == 2) {                                          // cambio di mese o anno: il giorno resta nel mese
+    int m = ((t.tm_mon % 12) + 12) % 12, y = t.tm_year + 1900 + (t.tm_mon < 0 ? -1 : t.tm_mon / 12);
+    int nd = DAYS[m] + (m == 1 && ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0));
+    if (t.tm_mday > nd) t.tm_mday = nd;
+  }
+  t.tm_isdst = -1;
+  time_t x = mktime(&t);
+  localtime_r(&x, &t);
+  cd_edit_values();
+}
+static void cd_edit_build() {
+  if (g_cde.scr) { lv_obj_delete(g_cde.scr); g_cde.scr = nullptr; }
+  g_cdOpen = g_cdEditOpen = true;
+  lv_obj_t *s = plain_obj(lv_layer_top());
+  g_cde.scr = s;
+  lv_obj_set_size(s, 480, 320);
+  lv_obj_set_style_bg_color(s, lv_color_hex(C_BG), 0);
+  lv_obj_set_style_bg_opa(s, LV_OPA_COVER, 0);
+  lv_obj_add_flag(s, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_t *hd = trow(s, 13, 11);
+  mklabel(hd, U_SPARK " ", F14, C_ACCENT);
+  mklabel(hd, g_cde.slot >= 0 ? TRS("modifica conto", "edit countdown") : TRS("nuovo conto", "new countdown"), F14, C_TEXT);
+  mklabel(hd, g_cde.step ? TRS(" /data", " /date") : TRS(" /nome", " /name"), F14, C_FAINT);
+  tbtn(s, 378, 5, 89, 32, TRS(U_LEFT " annulla", U_LEFT " cancel"), F14, C_MUTED, C_BORDER, cd_edit_cb, (void *)(intptr_t)-1);
+  if (g_cde.step == 0) {
+    g_cde.ta = lv_textarea_create(s);
+    lv_textarea_set_one_line(g_cde.ta, true);
+    lv_textarea_set_max_length(g_cde.ta, sizeof(g_cde.title) - 1);
+    lv_textarea_set_text(g_cde.ta, g_cde.title);
+    lv_textarea_set_placeholder_text(g_cde.ta, TRS("nome (es.: consegna sito, vacanze)", "name (e.g. site launch, holidays)"));
+    lv_obj_set_size(g_cde.ta, 456, 40);
+    lv_obj_set_pos(g_cde.ta, 12, 50);
+    style_ta(g_cde.ta);
+    lv_obj_t *kb = lv_keyboard_create(s);
+    style_kb(kb);
+    lv_keyboard_set_textarea(kb, g_cde.ta);
+    lv_obj_add_event_cb(kb, cd_edit_kb_cb, LV_EVENT_ALL, NULL);
+    return;
+  }
+  hline(s, 13, 42, 454, C_BORDER);
+  lv_obj_t *nm = tstatic(s, g_cde.title, F14, C_TEXT, 24, 50);
+  lv_obj_set_width(nm, 432); lv_label_set_long_mode(nm, LV_LABEL_LONG_DOT);
+  const char *LB_IT[5] = {"giorno", "mese", "anno", "ora", "minuti"};
+  const char *LB_EN[5] = {"day", "month", "year", "hour", "minutes"};
+  for (int i = 0; i < 5; i++) {
+    int x = 24 + i * 88;
+    lv_obj_t *l = tstatic(s, (g_lang ? LB_EN : LB_IT)[i], F12, C_FAINT, x, 76);
+    lv_obj_set_width(l, 80); lv_obj_set_style_text_align(l, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_t *p = tbtn(s, x, 94, 80, 40, "+", F22, C_TEXT, C_BORDER, nullptr, nullptr);
+    lv_obj_add_event_cb(p, cd_edit_cb, LV_EVENT_SHORT_CLICKED, (void *)(intptr_t)(20 + i * 2 + 1));
+    lv_obj_add_event_cb(p, cd_edit_cb, LV_EVENT_LONG_PRESSED_REPEAT, (void *)(intptr_t)(20 + i * 2 + 1));
+    g_cde.val[i] = tstatic(s, "", F22, C_ACCENT, x, 142);
+    lv_obj_set_width(g_cde.val[i], 80); lv_obj_set_style_text_align(g_cde.val[i], LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_t *m = tbtn(s, x, 176, 80, 40, "-", F22, C_TEXT, C_BORDER, nullptr, nullptr);
+    lv_obj_add_event_cb(m, cd_edit_cb, LV_EVENT_SHORT_CLICKED, (void *)(intptr_t)(20 + i * 2));
+    lv_obj_add_event_cb(m, cd_edit_cb, LV_EVENT_LONG_PRESSED_REPEAT, (void *)(intptr_t)(20 + i * 2));
+  }
+  g_cde.prev = tstatic(s, "", F12, C_MUTED, 24, 232);
+  lv_obj_set_width(g_cde.prev, 432); lv_label_set_long_mode(g_cde.prev, LV_LABEL_LONG_DOT);
+  tbtn(s, 24, 266, 120, 40, TRS(U_LEFT " nome", U_LEFT " name"), F14, C_MUTED, C_BORDER, cd_edit_cb, (void *)(intptr_t)-2);
+  tbtn(s, 336, 266, 120, 40, TRS("salva", "save"), F14, C_ACCENT, C_ACCENT, cd_edit_cb, (void *)(intptr_t)-3);
+  cd_edit_values();
+}
+static void cd_edit_open(int slot) {
+  memset(&g_cde, 0, sizeof(g_cde));
+  g_cde.slot = slot;
+  time_t base = (slot >= 0 && slot < g_cdN) ? (time_t)g_cd[slot].at : time(nullptr) + 7 * 86400;
+  localtime_r(&base, &g_cde.t);
+  if (slot < 0) { g_cde.t.tm_hour = 9; g_cde.t.tm_min = 0; }       // nuovo: tra una settimana alle 9:00
+  g_cde.t.tm_sec = 0;
+  g_cde.t.tm_min -= g_cde.t.tm_min % 5;
+  if (slot >= 0 && slot < g_cdN) strlcpy(g_cde.title, g_cd[slot].title, sizeof(g_cde.title));
+  cd_edit_build();
+}
+
 // ---- Pannello a tendina: comandi rapidi e ultimi avvisi ----
 static lv_obj_t *g_shadePanel = nullptr, *g_shadeTm = nullptr;   // g_shadeTm: tempo del timer, aggiornato ogni secondo
 static void shade_close() { if (g_shade) { lv_obj_delete(g_shade); g_shade = nullptr; g_shadePanel = nullptr; g_shadeTm = nullptr; } }
@@ -4828,7 +5393,9 @@ static const char *shade_btn_name(int k) {
     case SHB_SOUND:   return TRS("suoni pc", "pc sound");
     case SHB_REFRESH: return TRS("aggiorna", "refresh");
     case SHB_CAL:     return TRS("calendario", "calendar");
-    default:          return TRS("meteo", "weather");
+    case SHB_WX:      return TRS("meteo", "weather");
+    case SHB_MEDIA:   return "media";
+    default:          return TRS("conto", "countdown");
   }
 }
 static void open_settings_group(int g);
@@ -4851,6 +5418,8 @@ static void shade_cb(lv_event_t *e) {
     case 6: shade_close(); cal_view_open(nullptr); return;
     case 7: shade_close(); wx_week_open(nullptr); return;
     case 8: shade_close(); open_settings_group(4); return;      // rete e pc
+    case 10: shade_close(); media_view_open(); return;
+    case 11: shade_close(); cd_view_build(); return;
     case 9: {                                                  // prossimo evento: il calendario su quel giorno
       time_t now = time(nullptr);
       int ci = now > 1000000000L ? cal_next((uint32_t)now) : -1;
@@ -4952,6 +5521,18 @@ static void shade_open(bool anim) {
         else strlcpy(st, "--", sizeof(st));
         shade_btn(p, x, y, shade_btn_name(k), st, C_TEXT, shade_cb, (void *)(intptr_t)7);
         break;
+      case SHB_MEDIA: {
+        int ms = media_pc_ok() ? g_pc.mediaSt : 0;
+        shade_btn(p, x, y, "media", ms == 1 ? TRS("in play", "playing") : ms == 2 ? TRS("in pausa", "paused") : TRS("niente", "idle"),
+                  ms == 1 ? C_OK : ms == 2 ? C_WARN : C_MUTED, shade_cb, (void *)(intptr_t)10);
+        break;
+      }
+      case SHB_CD: {
+        int ci = now > 1000000000L ? cd_next(now) : -1;
+        if (ci >= 0) cd_short(g_cd[ci], now, st, sizeof(st)); else strlcpy(st, TRS("nessuno", "none"), sizeof(st));
+        shade_btn(p, x, y, shade_btn_name(k), st, ci >= 0 ? C_ACCENT : C_MUTED, shade_cb, (void *)(intptr_t)11);
+        break;
+      }
     }
   }
   // oggi: pomodori, Claude al lavoro, 5 ore
@@ -5343,18 +5924,23 @@ static void settings_action_cb(lv_event_t *e) {
         request_state(ST_SETTINGS);
       }
       break;
+    case 31:                                           // pagina media: si apre da sola quando parte la musica
+      g_mediaAuto = !g_mediaAuto;
+      g_prefs.putBool("mauto", g_mediaAuto);
+      request_state(ST_SETTINGS);
+      break;
     case 30:                                           // promemoria pausa: spento -> 45 -> 60 -> 90 min
       g_brkIdx = (g_brkIdx + 1) % 4;
       g_prefs.putInt("brk", g_brkIdx);
       g_brkNext = 0;
       request_state(ST_SETTINGS);
       break;
-    case 40: case 41: case 42: case 43: case 44: case 45: case 46: {   // tasti della tendina
+    case 40: case 41: case 42: case 43: case 44: case 45: case 46: case 47: case 48: {   // tasti della tendina
       int k = act - 40;
       bool on = (g_shBtn >> k) & 1;
       if (on && shade_btn_count() == 1) break;           // almeno uno
       if (!on && shade_btn_count() >= 4) break;          // al massimo quattro
-      g_shBtn ^= (uint8_t)(1 << k);
+      g_shBtn ^= (uint16_t)(1 << k);
       g_prefs.putUInt("shbtn", g_shBtn);
       request_state(ST_SETTINGS);
       break;
@@ -5508,6 +6094,8 @@ static void ui_settings() {
         char tb[24]; snprintf(tb, sizeof(tb), TRS("%d tasti", "%d buttons"), shade_btn_count());
         sub(SG_SHADE, tb);
       }
+      kv_row(lst, TRS("media: apri da sola", "media: open by itself"), g_mediaAuto ? TRS("s\xC3\xAC", "yes") : "no",
+             C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)31);
       static const char *NIGHT_LBL[4] = {"", "22:00-07:00", "23:00-07:00", "00:00-07:00"};
       kv_row(lst, TRS("notte", "night"), g_nightIdx ? NIGHT_LBL[g_nightIdx] : TRS("spento", "off"),
              C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)16);
@@ -5976,6 +6564,9 @@ static void render_state() {
   tm_menu_close();
   wx_week_close();
   cal_view_close();
+  media_view_close();
+  cd_edit_close();
+  cd_view_close();
   shade_close();
   upd_close();                                   // se l'installazione e' in corso il loop la rimette
   night_clock_close();
@@ -6122,6 +6713,22 @@ static void extra_task(void *) {
       PcNotify n = g_pcNtf;
       g_pcNtfReq = false;
       if (g_wifi.isConnected()) postPcNotify(n.host, n.ev, n.title, n.msg);
+    }
+    if (g_mcActReq) {
+      char h[48], a[10];
+      strlcpy(h, g_mcHost, sizeof(h)); strlcpy(a, g_mcAct, sizeof(a));
+      int sec = g_mcSec;
+      g_mcActReq = false;
+      if (g_wifi.isConnected()) postPcMedia(h, a, sec);
+    }
+    if (g_mcReq) {
+      char h[48]; strlcpy(h, g_mcHost, sizeof(h));
+      uint32_t id = 0;
+      bool ok = g_mcTmp && g_wifi.isConnected() && fetchPcCover(h, g_mcTmp, MC_N * MC_N * 2, &id);
+      g_mcGot = ok ? id : 0;
+      g_mcOk = ok;
+      g_mcReq = false;
+      g_mcDone = true;
     }
     if (g_pcReq) {
       PcStats p = {};
@@ -6300,6 +6907,14 @@ void setup() {
     load_history();
     g_calAll = (CalItem *)heap_caps_calloc(CAL_ALL_MAX, sizeof(CalItem), MALLOC_CAP_SPIRAM);
     g_calTmp = (CalItem *)heap_caps_calloc(CAL_ALL_MAX, sizeof(CalItem), MALLOC_CAP_SPIRAM);
+    g_mcImg = (uint8_t *)heap_caps_calloc(MC_N * MC_N, 2, MALLOC_CAP_SPIRAM);
+    g_mcTmp = (uint8_t *)heap_caps_calloc(MC_N * MC_N, 2, MALLOC_CAP_SPIRAM);
+    memset(&g_mcDsc, 0, sizeof(g_mcDsc));
+    g_mcDsc.header.magic = LV_IMAGE_HEADER_MAGIC;
+    g_mcDsc.header.cf = LV_COLOR_FORMAT_RGB565;
+    g_mcDsc.header.w = MC_N; g_mcDsc.header.h = MC_N; g_mcDsc.header.stride = MC_N * 2;
+    g_mcDsc.data_size = MC_N * MC_N * 2;
+    g_mcDsc.data = g_mcImg;
     pomo_load();
     al_load();
   }
@@ -6423,6 +7038,17 @@ void loop() {
     }
     if (g_calView) cal_view_build();
   }
+  if (g_mcDone) {                                   // copertina arrivata dal task extra
+    g_mcDone = false;
+    if (g_mcOk && g_mcImg && g_mcGot == g_mcWant) {
+      memcpy(g_mcImg, g_mcTmp, MC_N * MC_N * 2);
+      g_mcId = g_mcGot; g_mcHave = true;
+      lv_image_cache_drop(&g_mcDsc);
+      media_view_update(true);
+    } else if (g_mcOk) {
+      g_mcWant = 0;                                  // il brano e' cambiato nel frattempo: si riprova
+    }
+  }
   if (g_wxDone) {
     g_wxDone = false;
     if (g_wxRes.ok) { g_wx = g_wxRes; g_wxAtMs = millis(); }
@@ -6431,11 +7057,15 @@ void loop() {
   }
   if (g_pcDone) {
     g_pcDone = false;
+    const size_t MOFS = offsetof(PcStats, mediaSt), MLEN = offsetof(PcStats, mediaApp) + sizeof(g_pc.mediaApp) - MOFS;
+    if (!g_pcRes.ok) memcpy((uint8_t *)&g_pcRes + MOFS, (uint8_t *)&g_pc + MOFS, MLEN);
     g_pc = g_pcRes;
+    if (!g_pc.ok) media_view_update(false);
     if (g_pc.ok) {
       g_pcAtMs = millis();
       if (g_pc.ccId) cc_event(g_pc.ccId, g_pc.ccEv, g_pc.ccProj, g_pc.ccDur, g_pc.ccAge);
       if (g_pc.ccBusy != g_ccBusyN) { g_ccBusyN = g_pc.ccBusy; cc_busy_ui(); }
+      media_on_pc();
       if (g_pc.calN >= 0) {
         g_calN = g_pc.calN;
         for (int i = 0; i < g_calN; i++) { g_cal[i].s = g_pc.cal[i].s; g_cal[i].e = g_pc.cal[i].e; strlcpy(g_cal[i].title, g_pc.cal[i].title, sizeof(g_cal[i].title)); }
@@ -6456,7 +7086,7 @@ void loop() {
     if (due) { g_wxTryMs = millis(); g_wxReq = true; }
   }
   if (g_state == ST_MAIN && g_pcHost[0] && g_screenMode < 2 && !g_pcReq && !g_pcDone &&
-      millis() - g_pcTryMs >= PC_INT_S[g_pcIntIdx] * 1000UL - 50) {
+      (int32_t)(millis() - g_pcTryMs) >= (int32_t)pc_int_ms() - 50) {
     g_pcTryMs = millis();
     strlcpy(g_pcReqHost, g_pcHost, sizeof(g_pcReqHost));
     g_pcReq = true;
@@ -6487,6 +7117,9 @@ void loop() {
       cal_tick();
       tm_restore();
       brk_tick();
+      cd_tick();
+      if (g_mv.scr) media_view_progress();
+      if (g_cdv.scr) cd_view_tick();
       if (g_shadeTm) { char tt[12]; shade_timer_text(tt, sizeof(tt)); label_set(g_shadeTm, tt); }
       if (g_ccBusyN && (!g_pcAtMs || now - g_pcAtMs > pc_stale_ms())) { g_ccBusyN = 0; cc_busy_ui(); }
     }
@@ -6608,7 +7241,7 @@ void loop() {
       int k = g_ntPend;
       g_ntPend = NT_NONE;
       if (!g_ntT0) g_lastTouchMs = millis();
-      if (k == NT_CLAUDE) cc_show(); else if (k == NT_CAL) cal_show(); else if (k == NT_BRK) brk_show(); else tm_show();
+      if (k == NT_CLAUDE) cc_show(); else if (k == NT_CAL) cal_show(); else if (k == NT_BRK) brk_show(); else if (k == NT_CD) cd_show(); else tm_show();
     }
     if (g_nt.scrim) notice_tick();
   }

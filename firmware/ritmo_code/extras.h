@@ -61,6 +61,10 @@ struct PcStats {
   int   ccDur, ccAge;      // secondi (ccDur -1 = sconosciuta)
   int   ccBusy;            // sessioni al lavoro
   int   actMin;            // minuti di uso continuo del PC (-1 = PC Monitor vecchio)
+  // media in riproduzione (PC Monitor 1.8): stato 0 niente, 1 in riproduzione, 2 in pausa
+  int   mediaSt, mediaPos, mediaDur, mediaCv, mediaCtl;
+  uint32_t mediaId;
+  char  mediaTitle[64], mediaArtist[48], mediaApp[20];
   // prossimi eventi del calendario (letti dal PC Monitor dal link iCal); calN < 0 = calendario non impostato
   int   calN;
   struct { uint32_t s, e; char title[64]; } cal[3];
@@ -78,3 +82,6 @@ bool installFromUrl(const char* url, void (*progress)(int pct), String& err);
 // eventi del calendario per le viste giorno/settimana/mese (GET http://<pc>/calendar.json)
 struct CalItem { uint32_t s, e; uint8_t allday; char title[64]; };
 int fetchCalRange(const char* host, CalItem* out, int max);   // voci lette, -1 errore
+// pagina media: comando al PC (toggle, next, prev, seek, volup, voldown, mute) e copertina RGB565
+bool postPcMedia(const char* host, const char* action, int sec);
+bool fetchPcCover(const char* host, uint8_t* buf, size_t len, uint32_t* id);

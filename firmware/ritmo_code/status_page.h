@@ -111,7 +111,7 @@ td.r{text-align:right;white-space:nowrap}td.id{color:var(--fa);word-break:break-
 <div class=menu>
  <div class=mg><span class=mt>claude</span><a href="/models">modelli &middot; modifica ID</a></div>
  <div class=mg><span class=mt>home e meteo</span><a href="/home#citta">citta' del meteo</a></div>
- <div class=mg><span class=mt>calendario</span><a href="/home#cal">link iCal (segreto)</a></div>
+ <div class=mg><span class=mt>calendario</span><a href="/home#cal">link iCal (segreto)</a><a href="/home#cd">conto alla rovescia</a></div>
  <div class=mg><span class=mt>rete e pc</span><a href="/home#pc">indirizzo del pc</a><a href="/home#kwh">prezzo dell'energia</a></div>
  <div class=mg><span class=mt>sistema</span><a href="/update">aggiorna firmware</a><span id=fw class=f></span></div>
 </div>

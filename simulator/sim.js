@@ -16,7 +16,7 @@ const C = {
   BORDER: '#3A3834', TEXT: '#E8E6DF', MUTED: '#8E8B82', FAINT: '#5C5A55', ACCENT: '#D97757',
   OK: '#9BC08A', WARN: '#E0B25A', BAD: '#E06C5A', BLUE: '#7DB9D6', LILAC: '#B7A6E0',
 };
-const CFG = { PIN_LEN: 4, MAX_PIN_ATTEMPTS: 10, LOCKOUT_SEC: 15, ACCT_MAX: 4, FW: '3.9.10' };
+const CFG = { PIN_LEN: 4, MAX_PIN_ATTEMPTS: 10, LOCKOUT_SEC: 15, ACCT_MAX: 4, FW: '3.9.11' };
 const DEMO_PIN = '1234';
 
 const $ = (id) => document.getElementById(id);
@@ -1417,6 +1417,82 @@ function alLine(r) {
 }
 let SHADE = null;
 function shadeClose() { if (SHADE) { SHADE.remove(); SHADE = null; } }
+// ---- Pagina media e conto alla rovescia (come il firmware 3.9.11) ----
+const MEDIA = { st: 1, t: 'Everything In Its Right Place', a: 'Radiohead', app: 'Spotify', pos: 83, dur: 251, cover: true };
+const CDS = [{ at: 0, t: 'Consegna sito Metaboliq' }, { at: 0, t: 'Vacanze' }];
+let MV = null, CDV = null, cdSel = 0;
+function btnAt(p, html, x, y, w, h, fn, opt) { const b = tbtn(p, html, w, h, fn, opt); b.style.left = x + 'px'; b.style.top = y + 'px'; return b; }
+function pageHead(s, title, sub, close) {
+  label(s, `<span style="color:${C.ACCENT}">✻</span> ${title}<span style="color:${C.FAINT}">${sub}</span>`, 14, C.TEXT, 13, 11);
+  btnAt(s, TRS('← chiudi', '← close'), 378, 5, 89, 32, close, { color: C.MUTED, size: 14 });
+  rrect(s, 13, 42, 454, 1, 0, C.BORDER);
+}
+const mmss = (x) => `${Math.floor(x / 60)}:${pad2(x % 60)}`;
+function mediaViewClose() { if (MV) { MV.remove(); MV = null; } }
+function mediaViewOpen() {
+  mediaViewClose();
+  const s = obj(scr, 0, 0, 480, 320, { background: C.BG, zIndex: 61 });
+  s.addEventListener('click', (e) => e.stopPropagation());
+  MV = s;
+  pageHead(s, 'media', MEDIA.st ? ` /${MEDIA.app.toLowerCase()}` : '', mediaViewClose);
+  const cv = rrect(s, 24, 58, 160, 160, 6, C.SURFACE);
+  if (MEDIA.cover) Object.assign(cv.style, { background: 'linear-gradient(135deg,#2b4c7e 0%,#7a3b69 55%,#d97757 100%)' });
+  else align(label(cv, '♪', 28, C.FAINT), 'CENTER');
+  label(s, MEDIA.st === 1 ? TRS('in riproduzione', 'playing') : MEDIA.st === 2 ? TRS('in pausa', 'paused') : '', 12, MEDIA.st === 1 ? C.OK : C.WARN, 24, 230);
+  const t = label(s, escapeHtml(MEDIA.t), 22, C.TEXT, 204, 56);
+  Object.assign(t.style, { width: '252px', height: '58px', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', whiteSpace: 'normal', lineHeight: '27px' });
+  const a = label(s, escapeHtml(MEDIA.a), 14, C.MUTED, 204, 118);
+  Object.assign(a.style, { width: '252px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+  const w = Math.round(252 * MEDIA.pos / MEDIA.dur);
+  rrect(s, 204, 157, 252, 4, 2, C.BORDER); rrect(s, 204, 157, w, 4, 2, C.TEXT); rrect(s, 204 + w - 5, 154, 10, 10, 5, C.TEXT);
+  label(s, mmss(MEDIA.pos), 12, C.MUTED, 204, 174);
+  const d = label(s, mmss(MEDIA.dur), 12, C.MUTED, 204, 174); Object.assign(d.style, { width: '252px', textAlign: 'right' });
+  btnAt(s, '⏮', 210, 200, 70, 50, () => {}, { size: 22 });
+  const pb = btnAt(s, MEDIA.st === 1 ? '❚❚' : '▶', 290, 198, 80, 54, () => { MEDIA.st = MEDIA.st === 1 ? 2 : 1; mediaViewOpen(); }, { size: 22, color: C.BG, border: C.TEXT });
+  Object.assign(pb.style, { background: C.TEXT, borderRadius: '27px' });
+  btnAt(s, '⏭', 380, 200, 70, 50, () => {}, { size: 22 });
+  btnAt(s, '🔉 -', 210, 264, 70, 38, () => {}, { size: 14, color: C.MUTED });
+  btnAt(s, '🔇', 290, 264, 80, 38, () => {}, { size: 14, color: C.MUTED });
+  btnAt(s, '🔊 +', 380, 264, 70, 38, () => {}, { size: 14, color: C.MUTED });
+  label(s, TRS('volume del pc', 'pc volume'), 12, C.FAINT, 24, 276);
+}
+function cdParts(at, now) {
+  const d = at - now;
+  if (d > 0) {
+    const days = Math.floor(d / 86400), h = Math.floor(d % 86400 / 3600), m = Math.floor(d % 3600 / 60), sec = d % 60;
+    if (days >= 1) return [String(days), days === 1 ? ' giorno' : ' giorni', `e ${h} ore, ${m} minuti`];
+    if (h >= 1) return [String(h), h === 1 ? ' ora' : ' ore', `e ${m} minuti, ${pad2(sec)} secondi`];
+    return [String(m), m === 1 ? ' minuto' : ' minuti', `e ${pad2(sec)} secondi`];
+  }
+  return -d < 86400 ? ['', 'ci siamo!', "e' oggi"] : [String(Math.floor(-d / 86400)), ' giorni fa', "gia' passato"];
+}
+const cdShort = (at, now) => { const d = at - now; return d > 86400 ? `${Math.floor(d / 86400)} gg` : d > 3600 ? `${Math.floor(d / 3600)} h` : d > 0 ? `${Math.ceil(d / 60)} min` : d > -86400 ? 'oggi' : `-${Math.floor(-d / 86400)} gg`; };
+function cdViewClose() { if (CDV) { CDV.remove(); CDV = null; } }
+function cdViewOpen() {
+  cdViewClose();
+  const now = nowEpoch();
+  if (!CDS[0].at) { CDS[0].at = dayAdd(now, 13) + 9 * 3600; CDS[1].at = dayAdd(now, 47) + 8 * 3600; }
+  const s = obj(scr, 0, 0, 480, 320, { background: C.BG, zIndex: 61 });
+  s.addEventListener('click', (e) => e.stopPropagation());
+  CDV = s;
+  pageHead(s, TRS('conto alla rovescia', 'countdown'), '', cdViewClose);
+  const c = CDS[cdSel], [big, unit, sub] = cdParts(c.at, now);
+  const t = label(s, escapeHtml(c.t), 22, C.TEXT, 24, 54); Object.assign(t.style, { width: '432px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+  label(s, `<span style="font-size:54px;font-weight:800;letter-spacing:-2px">${big}</span><span style="font-size:22px">${unit}</span>`, 22, C.ACCENT, 24, 78);
+  label(s, sub, 14, C.MUTED, 24, 150);
+  const dd = new Date(c.at * 1000), GI = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
+  const MI = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno', 'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
+  label(s, `${GI[dd.getDay()]} ${dd.getDate()} ${MI[dd.getMonth()]} ${dd.getFullYear()} · ${pad2(dd.getHours())}:${pad2(dd.getMinutes())}`, 12, C.FAINT, 24, 174);
+  CDS.forEach((x, i) => {
+    const sel = i === cdSel;
+    const b = btnAt(s, `<span style="font-size:12px;color:${sel ? C.TEXT : C.MUTED};display:block;width:94px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(x.t)}</span><span style="font-size:12px;color:${sel ? C.ACCENT : C.FAINT}">${cdShort(x.at, now)}</span>`,
+      24 + i * 112, 204, 104, 46, () => { cdSel = i; cdViewOpen(); }, { border: sel ? C.ACCENT : C.BORDER });
+    b.style.lineHeight = '1.4'; b._lbl.style.textAlign = 'center';
+  });
+  if (CDS.length < 3) btnAt(s, TRS('+ nuovo', '+ new'), 24 + CDS.length * 112, 204, 104, 46, () => {}, { size: 14, color: C.ACCENT });
+  btnAt(s, TRS('modifica', 'edit'), 24, 266, 120, 38, () => {}, { size: 14 });
+  btnAt(s, TRS('elimina', 'delete'), 152, 266, 120, 38, () => {}, { size: 14, color: C.MUTED });
+}
 const SHB_NAMES = () => [TRS('richieste', 'requests'), 'timer', TRS('luce', 'light'), TRS('suoni pc', 'pc sound'), TRS('aggiorna', 'refresh'), TRS('calendario', 'calendar'), TRS('meteo', 'weather')];
 const shbCount = () => [0, 1, 2, 3, 4, 5, 6].filter((k) => (P.shbtn >> k) & 1).length;
 function shadeOpen(anim) {
@@ -2331,7 +2407,7 @@ function initPanel() {
 }
 
 // accesso per tools/capture_screens.js (immagini del README)
-window.__sim = { API, G, ST, P, boot, requestState, setTile, refreshUiValues, dashTick, showMoment, momentClose, ccEvent, ccBusySet, calViewOpen, CAL, CAL_ALL, calShow, pauseSet, uiSettings, shadeOpen, shadeClose, alPush, noticeClose, tmMenuOpen, wxWeekOpen, tmStart, TM, TM_TIMER, TM_FOCUS, TM_BREAK, pauseMenuOpen, pauseMenuClose, nightClockShow, nightClockClose };
+window.__sim = { API, G, ST, P, boot, requestState, setTile, refreshUiValues, dashTick, showMoment, momentClose, ccEvent, ccBusySet, calViewOpen, CAL, CAL_ALL, calShow, mediaViewOpen, cdViewOpen, MEDIA, CDS, pauseSet, uiSettings, shadeOpen, shadeClose, alPush, noticeClose, tmMenuOpen, wxWeekOpen, tmStart, TM, TM_TIMER, TM_FOCUS, TM_BREAK, pauseMenuOpen, pauseMenuClose, nightClockShow, nightClockClose };
 initPanel();
 applyBrightness();
 boot(true);
