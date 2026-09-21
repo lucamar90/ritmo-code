@@ -16,7 +16,7 @@ const C = {
   BORDER: '#3A3834', TEXT: '#E8E6DF', MUTED: '#8E8B82', FAINT: '#5C5A55', ACCENT: '#D97757',
   OK: '#9BC08A', WARN: '#E0B25A', BAD: '#E06C5A', BLUE: '#7DB9D6', LILAC: '#B7A6E0',
 };
-const CFG = { PIN_LEN: 4, MAX_PIN_ATTEMPTS: 10, LOCKOUT_BASE_SEC: 60, ACCT_MAX: 4, FW: '3.9.9' };
+const CFG = { PIN_LEN: 4, MAX_PIN_ATTEMPTS: 10, LOCKOUT_SEC: 15, ACCT_MAX: 4, FW: '3.9.9' };
 const DEMO_PIN = '1234';
 
 const $ = (id) => document.getElementById(id);
@@ -407,7 +407,7 @@ function pinSubmit() {
   } else {
     P.pinatt++; G.pinEntry = ''; pinUpdateDots();
     if (P.pinatt >= CFG.MAX_PIN_ATTEMPTS) { slog('[PIN] limite superato -> wipe'); factoryReset(); requestState(ST.WIFI); return; }
-    const wait = Math.min(3600, CFG.LOCKOUT_BASE_SEC * (1 << (P.pinatt - 1)));
+    const wait = CFG.LOCKOUT_SEC;
     G.lockoutUntil = millis() + wait * 1000;
     setText(pinMsg, TRS(`PIN errato (${P.pinatt}/${CFG.MAX_PIN_ATTEMPTS}). Attendi ${wait}s`, `Wrong PIN (${P.pinatt}/${CFG.MAX_PIN_ATTEMPTS}). Wait ${wait}s`));
   }

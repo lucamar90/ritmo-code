@@ -373,7 +373,7 @@ form and the same PIN.
 - Tokens are stored **encrypted** (AES-256-GCM, key derived from the PIN with SHA-256), one NVS slot
   per account, all under **the same PIN**. The PIN is **never stored**: a wrong PIN fails the GCM check.
 - After **10 wrong attempts** the credentials are **wiped** and the device returns to setup (each
-  failure doubles the lockout).
+  failure waits 15 seconds).
 - The PIN stays in RAM for the session so switching accounts does not ask again; the active token is
   already decrypted in RAM anyway.
 - History and hourly rhythm live in **LittleFS**, one file per account (no token).

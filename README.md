@@ -375,7 +375,7 @@ lo stesso modulo e lo stesso PIN.
   per account, tutti con **lo stesso PIN**. Il PIN **non viene mai salvato**: un PIN sbagliato fa
   fallire la verifica GCM.
 - Dopo **10 tentativi** sbagliati le credenziali vengono **cancellate** e si torna al primo avvio
-  (ogni errore raddoppia l'attesa).
+  (dopo ogni errore si attendono 15 secondi).
 - Il PIN resta in RAM durante la sessione per cambiare account senza richiederlo; il token attivo è
   comunque già decifrato in RAM.
 - Storico e ritmo orario stanno in **LittleFS**, un file per account (senza token).

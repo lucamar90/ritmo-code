@@ -1168,8 +1168,7 @@ static void pin_submit() {
       request_state(ST_WIFI);
       return;
     }
-    int wait = LOCKOUT_BASE_SEC * (1 << (g_pinAttempts - 1));
-    if (wait > 3600) wait = 3600;
+    int wait = LOCKOUT_SEC;
     g_lockoutUntil = millis() + (uint32_t)wait * 1000;
     if (g_pinMsg) {
       char m[64];

@@ -50,7 +50,7 @@
 // ── Sicurezza (PIN + AES-256-GCM) ────────────────────────
 #define PIN_LEN                 4
 #define MAX_PIN_ATTEMPTS        10
-#define LOCKOUT_BASE_SEC        60       // raddoppia a ogni errore
+#define LOCKOUT_SEC             15       // attesa fissa dopo ogni errore (il tetto vero sono i 10 tentativi)
 #define KDF_ROUNDS              10000
 
 // ── Rete / API Claude ────────────────────────────────────
