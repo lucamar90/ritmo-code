@@ -258,6 +258,9 @@ static lv_obj_t *g_hdrStatus = nullptr;   // testo di stato nell'intestazione de
 // ---- Luminosita' ----
 static const uint8_t BRI_LEVELS[3] = {60, 160, 255};
 static int g_briIdx = 1;
+// luminosita' automatica: piena di giorno, bassa la sera (NVS "autobri")
+// 0 spento, 1 col sole (tramonto-alba dal meteo, altrimenti 20-07), 2 20:00-07:00, 3 21:00-07:00
+static int g_autoBri = 0;
 
 static uint32_t g_lastPollMs = 0;         // millis dell'ultimo poll (per la barra di refresh)
 static int g_pollSec = DEFAULT_POLL_SEC;  // intervallo di aggiornamento (config, NVS)
@@ -883,6 +886,8 @@ static void load_persisted() {
   }
   g_pinAttempts = g_prefs.getInt("pinatt", 0);
   g_briIdx = g_prefs.getInt("bri", 1);
+  g_autoBri = g_prefs.getInt("autobri", 0);
+  if (g_autoBri < 0 || g_autoBri > 3) g_autoBri = 0;
   if (g_briIdx < 0 || g_briIdx > 2) g_briIdx = 1;
   g_pollSec = g_prefs.getInt("poll", DEFAULT_POLL_SEC);
   if (g_pollSec < MIN_POLL_SEC || g_pollSec > MAX_POLL_SEC) g_pollSec = DEFAULT_POLL_SEC;
@@ -934,6 +939,34 @@ static void screen_apply() {
   ledcWrite(TFT_BL, g_screenMode == 2 ? 0 : g_screenMode == 3 ? NIGHT_BRI[g_nightBri]
                     : (g_screenMode == 1 ? DIM_LEVEL : BRI_LEVELS[g_briIdx]));
 }
+// luminosita' automatica: al cambio giorno/sera imposta alta o bassa. Un tocco manuale vale
+// fino al passaggio successivo; il livello scelto a mano in NVS non viene toccato.
+static int hm_min(const char *hm, int dflt) {
+  int h, m;
+  if (!hm || sscanf(hm, "%d:%d", &h, &m) != 2 || h < 0 || h > 23 || m < 0 || m > 59) return dflt;
+  return h * 60 + m;
+}
+static int g_autoBriPhase = -1;                      // -1 da ricalcolare, 0 giorno, 1 sera
+static void auto_bri_tick(bool force) {
+  static uint32_t last = 0;
+  if (!force && millis() - last < 30000) return;
+  last = millis();
+  if (!g_autoBri) { g_autoBriPhase = -1; return; }
+  time_t now = time(nullptr);
+  if (now < 1000000000L) return;
+  struct tm tv; localtime_r(&now, &tv);
+  int cur = tv.tm_hour * 60 + tv.tm_min;
+  int from = 20 * 60, to = 7 * 60;
+  if (g_autoBri == 1 && g_wx.ok) { from = hm_min(g_wx.sunset, from); to = hm_min(g_wx.sunrise, to); }
+  else if (g_autoBri == 3) from = 21 * 60;
+  int phase = (cur >= from || cur < to) ? 1 : 0;
+  if (phase == g_autoBriPhase && !force) return;
+  g_autoBriPhase = phase;
+  g_briIdx = phase ? 0 : 2;
+  apply_brightness();
+  Serial.printf("[SCREEN] luminosita' automatica: %s\n", phase ? "sera (bassa)" : "giorno (alta)");
+}
+
 // true se l'ora locale e' nella fascia notte scelta (fino alle 7:00)
 static bool night_active() {
   if (!g_nightIdx) return false;
@@ -5098,6 +5131,13 @@ static void settings_action_cb(lv_event_t *e) {
         request_state(ST_SETTINGS);
       }
       break;
+    case 29:                                           // luminosita' automatica: spento -> col sole -> 20-07 -> 21-07
+      g_autoBri = (g_autoBri + 1) % 4;
+      g_prefs.putInt("autobri", g_autoBri);
+      if (!g_autoBri) { g_briIdx = g_prefs.getInt("bri", 1); apply_brightness(); }   // torna al livello scelto a mano
+      auto_bri_tick(true);
+      request_state(ST_SETTINGS);
+      break;
     case 28:                                           // avviso calendario: 5 -> 10 -> 15 min prima -> spento
       g_calAlIdx = (g_calAlIdx + 1) % 4;
       g_prefs.putInt("calal", g_calAlIdx);
@@ -5211,6 +5251,12 @@ static void ui_settings() {
     }
     case SG_SCREEN: {
       kv_row(lst, TRS("luminosit\xC3\xA0", "brightness"), bri_label(), C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)3, &g_briLbl);
+      {
+        static const char *AB_IT[4] = {"spento", "col sole", "20:00-07:00", "21:00-07:00"};
+        static const char *AB_EN[4] = {"off", "with the sun", "20:00-07:00", "21:00-07:00"};
+        kv_row(lst, TRS("luminosit\xC3\xA0 auto", "auto brightness"), (g_lang ? AB_EN : AB_IT)[g_autoBri],
+               C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)29);
+      }
       static const char *NIGHT_LBL[4] = {"", "22:00-07:00", "23:00-07:00", "00:00-07:00"};
       kv_row(lst, TRS("notte", "night"), g_nightIdx ? NIGHT_LBL[g_nightIdx] : TRS("spento", "off"),
              C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)16);
@@ -6114,6 +6160,7 @@ void loop() {
     g_updCheckReq = true;
   }
   screen_tick();
+  auto_bri_tick(false);
   night_clock_sync();
   tm_tick();
   // home: meteo ogni 30 min (nuovo tentativo dopo 5 min se fallisce), PC ogni 5 s se la home e' visibile

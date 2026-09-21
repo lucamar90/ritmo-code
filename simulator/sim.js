@@ -46,7 +46,7 @@ const pad2 = (n) => String(n).padStart(2, '0');
 
 // ---------- stato persistente (NVS simulata) ----------
 const TZ_ROME = 99;
-const P = { lang: 0, tz: TZ_ROME, poll: 120, slide: 0, heatm: 3, bri: 1, pinatt: 0, rstal: true, ccal: 2, ccclose: 2, ccfocus: false, pcsnd: true, night: 0, nightp: true, dim: 0, pause: false, pauseUntil: 0, clock: 0, nightclk: true, nightbri: 0 };
+const P = { lang: 0, tz: TZ_ROME, poll: 120, slide: 0, heatm: 3, bri: 1, pinatt: 0, rstal: true, ccal: 2, ccclose: 2, ccfocus: false, pcsnd: true, night: 0, nightp: true, dim: 0, pause: false, pauseUntil: 0, clock: 0, nightclk: true, nightbri: 0, autobri: 0 };
 const TRS = (pt, en) => (P.lang ? en : pt);
 
 // ---------- stato app ----------
@@ -1844,6 +1844,9 @@ function uiSettings() {
     kvRow(lst, TRS('avviso reset', 'reset alert'), P.rstal ? TRS('sopra 80%', 'above 80%') : TRS('spento', 'off'), () => { P.rstal = !P.rstal; requestState(ST.SETTINGS); });
   } else if (g === 3) {
     kvRow(lst, TRS("luminosita'", 'brightness'), briN(), (v) => { P.bri = (P.bri + 1) % 3; applyBrightness(); setText(v, briN()); });
+    // luminosita' automatica: piena di giorno, bassa la sera (come il firmware)
+    const AB = P.lang ? ['off', 'with the sun', '20:00-07:00', '21:00-07:00'] : ['spento', 'col sole', '20:00-07:00', '21:00-07:00'];
+    kvRow(lst, TRS("luminosita' auto", 'auto brightness'), AB[P.autobri], () => { P.autobri = (P.autobri + 1) % 4; requestState(ST.SETTINGS); });
     const NL = ['', '22:00-07:00', '23:00-07:00', '00:00-07:00'];
     kvRow(lst, TRS('notte', 'night'), P.night ? NL[P.night] : TRS('spento', 'off'), () => { P.night = (P.night + 1) % 4; requestState(ST.SETTINGS); });
     if (P.night) kvRow(lst, TRS('schermo di notte', 'screen at night'), P.nightclk ? TRS('orologio', 'clock') : TRS('spento', 'off'), () => { P.nightclk = !P.nightclk; requestState(ST.SETTINGS); });
