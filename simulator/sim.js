@@ -1161,18 +1161,29 @@ function buildTileHome(t) {
     o.style.cursor = 'pointer';
     o.addEventListener('click', (e) => { if (realMs() - lastDragAt < 300) return; e.stopPropagation(); wxWeekOpen(); });
   }
-  const b = tbox(t, 13, 115, 454, 74, 'claude'); h.clBox = b;
+  // conto alla rovescia attivo: claude largo come il pc, a destra il conto sopra le icone (come il firmware)
+  const cdi = cdHomeIdx(nowEpoch()); h.cdOn = cdi >= 0;
+  const b = tbox(t, 13, 115, h.cdOn ? 314 : 454, 74, 'claude'); h.clBox = b;
   const goTo = (el, tile) => { el.style.cursor = 'pointer'; el.addEventListener('click', (e) => { if (realMs() - lastDragAt < 300) return; e.stopPropagation(); setTile(tile, true); }); };
   goTo(b, 1);                                                      // riquadro claude -> pagina ora
   h.row = [0, 1].map((i) => {
     const y = 13 + i * 30;
     label(b, i ? TRS('sett.', 'week') : '5h', 14, C.MUTED, 13, y);
-    const blk = blocksLabel(b, 57, y, 10, 14);
-    const pct = label(b, '', 14, C.TEXT, 149, y);
+    const blk = blocksLabel(b, 57, y, h.cdOn ? 18 : 10, 14);
+    const pct = label(b, '', 14, C.TEXT, h.cdOn ? 216 : 149, y);
     const info = label(b, '', 12, C.MUTED, 199, y + 2);
     const right = label(b, '', 12, C.MUTED, 303, y + 2); Object.assign(right.style, { width: '138px', textAlign: 'right' });
+    if (h.cdOn) { info.style.display = 'none'; right.style.display = 'none'; }
     return { blk, pct, info, right };
   });
+  if (h.cdOn) {
+    const c = CDS[cdi], d = c.at - nowEpoch();
+    const cb = tbox(t, 335, 115, 132, 74, escapeHtml(c.t.length > 15 ? c.t.slice(0, 12) + '...' : c.t));
+    cb.style.cursor = 'pointer'; cb.addEventListener('click', (e) => { e.stopPropagation(); cdSel = cdi; cdViewOpen(); });
+    const [big] = cdParts(c.at, nowEpoch());
+    const unit = d >= 86400 ? ' gg' : d >= 3600 ? ' ore' : d > 0 ? ' min' : 'ci siamo!';
+    label(cb, `<span style="font-size:${big.length >= 3 ? 22 : 54}px;font-weight:800;letter-spacing:-2px;color:${C.ACCENT}">${big}</span><span style="font-size:14px;color:${big ? C.MUTED : C.ACCENT}">${unit}</span>`, 14, C.MUTED, 12, 4);
+  }
   h.pcBox = tbox(t, 13, 206, 314, 40, 'pc');
   const icon = (x, fn, draw) => {
     const bt = tbtn(t, '', 40, 40, (e) => { if (realMs() - lastDragAt < 300) return; fn(); });
@@ -1467,6 +1478,14 @@ function cdParts(at, now) {
   return -d < 86400 ? ['', 'ci siamo!', "e' oggi"] : [String(Math.floor(-d / 86400)), ' giorni fa', "gia' passato"];
 }
 const cdShort = (at, now) => { const d = at - now; return d > 86400 ? `${Math.floor(d / 86400)} gg` : d > 3600 ? `${Math.floor(d / 3600)} h` : d > 0 ? `${Math.ceil(d / 60)} min` : d > -86400 ? 'oggi' : `-${Math.floor(-d / 86400)} gg`; };
+function cdHomeIdx(now) {
+  if (!CDS.length) return -1;
+  if (!CDS[0].at) { CDS[0].at = dayAdd(now, 13) + 9 * 3600; CDS[1].at = dayAdd(now, 47) + 8 * 3600; }
+  const fut = CDS.map((c, i) => [c, i]).filter(([c]) => c.at > now).sort((a, b) => a[0].at - b[0].at);
+  if (fut.length) return fut[0][1];
+  const today = CDS.findIndex((c) => c.at <= now && now - c.at < 86400);
+  return today;
+}
 function cdViewClose() { if (CDV) { CDV.remove(); CDV = null; } }
 function cdViewOpen() {
   cdViewClose();

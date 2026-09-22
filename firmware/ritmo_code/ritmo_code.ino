@@ -291,6 +291,9 @@ static int g_cdN = 0, g_cdSel = 0;
 static bool g_cdAlerted[CD_MAX];
 static void cd_load();
 static void cd_view_refresh();                  // ridisegna la pagina se e' aperta
+static int cd_home_idx(time_t now);             // il conto da mostrare in home, -1 nessuno
+static void cd_view_build();
+static void cd_parts(const CdItem &c, time_t now, char *big, char *unit, char *sub, size_t n);
 static bool g_cdOpen = false;                   // conto alla rovescia o editor aperti
 
 static uint32_t g_lastPollMs = 0;         // millis dell'ultimo poll (per la barra di refresh)
@@ -421,6 +424,8 @@ struct DashUI {
   Blocks hmBlk[2];
   lv_obj_t *hmPcRow, *hmPcOff, *hmPcVal[4], *hmPcLegend;
   lv_obj_t *hmPauseRow;                           // "richieste" + "in pausa" (in giallo): due colori, due etichette
+  lv_obj_t *hmCdLegend, *hmCdBig, *hmCdUnit;       // conto alla rovescia in home (a destra del riquadro claude)
+  bool hmCdOn;
   // pc
   lv_obj_t *pcLeg[4], *pcMain[4], *pcSub[3], *pcSpark[3], *pcSys, *pcDisks;
   int hmWxCode;
@@ -3400,6 +3405,13 @@ static void home_icons(lv_obj_t *t) {
   rrect(b, 25, 7, 2, 6, 1, C_TEXT);
   for (int k = 0; k < 4; k++) rrect(b, 13 + (k % 2) * 8, 19 + (k / 2) * 5, 4, 3, 0, C_MUTED);
 }
+static void home_cd_cb(lv_event_t *e) {
+  (void)e;
+  time_t now = time(nullptr);
+  int i = now > 1000000000L ? cd_home_idx(now) : -1;
+  if (i >= 0) g_cdSel = i;
+  cd_view_build();
+}
 static void build_tile_home(lv_obj_t *t) {
   // griglia aurea: colonna sinistra fino a x 297 (480 / phi), meteo da 310
   g_ui.hmTime = tlabel(t, F96, C_TEXT, 7, 7);
@@ -3432,19 +3444,34 @@ static void build_tile_home(lv_obj_t *t) {
 
   // centrato tra la riga della data (lettere fino a y 98) e il riquadro pc (y 206): 17 sopra e 17 sotto;
   // righe del metro a passo 30
-  lv_obj_t *b = tbox(t, 13, 115, 454, 74, "claude", C_BORDER, &g_ui.hmClLegend);
+  // con un conto alla rovescia attivo il riquadro claude e' largo come quello del pc (314) e a destra,
+  // sopra le tre icone, c'e' il conto; reset, stato e modelli restano nelle loro pagine
+  time_t now0 = time(nullptr);
+  g_ui.hmCdOn = now0 > 1000000000L && cd_home_idx(now0) >= 0;
+  bool cdOn = g_ui.hmCdOn;
+  lv_obj_t *b = tbox(t, 13, 115, cdOn ? 314 : 454, 74, "claude", C_BORDER, &g_ui.hmClLegend);
   lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);                       // -> pagina ora
   lv_obj_add_event_cb(b, home_goto_cb, LV_EVENT_SHORT_CLICKED, (void *)(intptr_t)1);
   const char *k[2] = {"5h", TRS("sett.", "week")};
   for (int i = 0; i < 2; i++) {
     int y = 13 + i * 30;
     tstatic(b, k[i], F14, C_MUTED, 13, y);
-    g_ui.hmBlk[i] = blocks_create(b, 57, y, 10, F14);
-    g_ui.hmPct[i] = tlabel(b, F14, C_TEXT, 149, y);
+    g_ui.hmBlk[i] = blocks_create(b, 57, y, cdOn ? 18 : 10, F14);   // piu' blocchi nello spazio liberato
+    g_ui.hmPct[i] = tlabel(b, F14, C_TEXT, cdOn ? 216 : 149, y);
     g_ui.hmInfo[i] = tlabel(b, F12, C_MUTED, 199, y + 2);
     g_ui.hmRight[i] = tlabel(b, F12, C_MUTED, 303, y + 2);
     lv_obj_set_width(g_ui.hmRight[i], 138);
     lv_obj_set_style_text_align(g_ui.hmRight[i], LV_TEXT_ALIGN_RIGHT, 0);
+    if (cdOn) { lv_obj_add_flag(g_ui.hmInfo[i], LV_OBJ_FLAG_HIDDEN); lv_obj_add_flag(g_ui.hmRight[i], LV_OBJ_FLAG_HIDDEN); }
+  }
+  if (cdOn) {
+    lv_obj_t *cb = tbox(t, 335, 115, 132, 74, "", C_BORDER, &g_ui.hmCdLegend);
+    lv_obj_add_flag(cb, LV_OBJ_FLAG_CLICKABLE);                    // -> pagina del conto alla rovescia
+    lv_obj_add_event_cb(cb, home_cd_cb, LV_EVENT_SHORT_CLICKED, NULL);
+    lv_obj_t *r = trow(cb, 12, 16);
+    g_ui.hmCdBig = mklabel(r, "", F54, C_ACCENT);
+    g_ui.hmCdUnit = mklabel(r, "", F14, C_MUTED);
+    lv_obj_set_style_pad_bottom(g_ui.hmCdUnit, 6, 0);
   }
   g_ui.hmPauseRow = trow(b, 0, 0);                  // allineata a destra come hmRight (bordo a x 441)
   mklabel(g_ui.hmPauseRow, TRS("in pausa", "paused"), F12, C_WARN);
@@ -3567,7 +3594,7 @@ static void home_redraw() {
   int ok = 0;
   for (int i = 0; i < NMODELS; i++) if (model_mood(i) == 1) ok++;
   if (g_ui.hmPauseRow) {
-    if (g_userPause) lv_obj_clear_flag(g_ui.hmPauseRow, LV_OBJ_FLAG_HIDDEN);
+    if (g_userPause && !g_ui.hmCdOn) lv_obj_clear_flag(g_ui.hmPauseRow, LV_OBJ_FLAG_HIDDEN);
     else             lv_obj_add_flag(g_ui.hmPauseRow, LV_OBJ_FLAG_HIDDEN);
   }
   if (g_userPause) label_set(g_ui.hmRight[1], "");                  // al suo posto: "richieste in pausa" su due colori
@@ -5173,6 +5200,43 @@ static void cd_cb(lv_event_t *e) {
   }
 }
 static void cd_view_refresh() { if (g_cdv.scr) cd_view_build(); }
+// in home: il piu' vicino nel futuro, oppure quello arrivato oggi ("ci siamo!"); -1 se nessuno e' attivo
+static int cd_home_idx(time_t now) {
+  int i = cd_next(now);
+  if (i >= 0 && (time_t)g_cd[i].at > now) return i;
+  for (int k = 0; k < g_cdN; k++) if ((time_t)g_cd[k].at <= now && now - (time_t)g_cd[k].at < 86400) return k;
+  return -1;
+}
+// ogni secondo: numero e unita' del riquadro in home; se un conto si accende o si spegne la home si ricostruisce
+static void home_cd_tick() {
+  if (!g_ui.hmTime) return;
+  time_t now = time(nullptr);
+  if (now < 1000000000L) return;
+  int i = cd_home_idx(now);
+  if ((i >= 0) != g_ui.hmCdOn) {
+    if (g_state == ST_MAIN && !g_cdOpen && !g_mv.scr && !g_shade && !g_nt.scrim && !g_calView && !g_wxWeek && !g_mo.scrim &&
+        !g_tmMenu && !g_pauseMenu) {
+      Serial.println("[CONTO] home: riquadro del conto alla rovescia " + String(i >= 0 ? "acceso" : "spento"));
+      request_state(ST_MAIN);
+    }
+    return;
+  }
+  if (i < 0 || !g_ui.hmCdBig) return;
+  char big[48], unit[48], sub[48];
+  cd_parts(g_cd[i], now, big, unit, sub, sizeof(sub));
+  long d = (long)g_cd[i].at - (long)now;                   // unita' corte: il riquadro e' largo 132
+  if (d >= 86400) strlcpy(unit, " gg", sizeof(unit));
+  else if (d >= 3600) strlcpy(unit, TRS(" ore", " h"), sizeof(unit));
+  else if (d > 0) strlcpy(unit, " min", sizeof(unit));
+  lv_obj_set_style_text_font(g_ui.hmCdBig, strlen(big) >= 3 ? F22 : F54, 0);
+  label_set(g_ui.hmCdBig, big);
+  label_set(g_ui.hmCdUnit, unit);
+  label_color(g_ui.hmCdUnit, big[0] ? C_MUTED : C_ACCENT);
+  char lg[24];                                             // la legenda tiene 15 caratteri
+  if (strlen(g_cd[i].title) > 15) snprintf(lg, sizeof(lg), "%.12s...", g_cd[i].title);
+  else strlcpy(lg, g_cd[i].title, sizeof(lg));
+  label_set(g_ui.hmCdLegend, lg);
+}
 static void cd_view_tick() {
   if (!g_cdv.scr || !g_cdv.big || !g_cdN) return;
   time_t now = time(nullptr);
@@ -7139,6 +7203,7 @@ void loop() {
       cd_tick();
       if (g_mv.scr) media_view_progress();
       if (g_cdv.scr) cd_view_tick();
+      home_cd_tick();
       if (g_shadeTm) { char tt[12]; shade_timer_text(tt, sizeof(tt)); label_set(g_shadeTm, tt); }
       if (g_ccBusyN && (!g_pcAtMs || now - g_pcAtMs > pc_stale_ms())) { g_ccBusyN = 0; cc_busy_ui(); }
     }
