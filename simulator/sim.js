@@ -1182,7 +1182,8 @@ function buildTileHome(t) {
     cb.style.cursor = 'pointer'; cb.addEventListener('click', (e) => { e.stopPropagation(); cdSel = cdi; cdViewOpen(); });
     const [big] = cdParts(c.at, nowEpoch());
     const unit = d >= 86400 ? ' gg' : d >= 3600 ? ' ore' : d > 0 ? ' min' : 'ci siamo!';
-    label(cb, `<span style="font-size:${big.length >= 3 ? 22 : 54}px;font-weight:800;letter-spacing:-2px;color:${C.ACCENT}">${big}</span><span style="font-size:14px;color:${big ? C.MUTED : C.ACCENT}">${unit}</span>`, 14, C.MUTED, 12, 4);
+    label(cb, `<span style="font-size:${big.length >= 3 ? 22 : 54}px;font-weight:800;letter-spacing:-2px;color:${C.ACCENT}">${big}</span><span style="font-size:14px;color:${big ? C.MUTED : C.ACCENT}">${unit}</span>`, 14, C.MUTED, 12, -2);
+    const r = d % 86400; if (d > 0) label(cb, `${pad2(Math.floor(r / 3600))}:${pad2(Math.floor(r % 3600 / 60))}:${pad2(r % 60)}`, 14, C.MUTED, 12, 51);
   }
   h.pcBox = tbox(t, 13, 206, 314, 40, 'pc');
   const icon = (x, fn, draw) => {

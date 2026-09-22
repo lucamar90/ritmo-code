@@ -424,7 +424,7 @@ struct DashUI {
   Blocks hmBlk[2];
   lv_obj_t *hmPcRow, *hmPcOff, *hmPcVal[4], *hmPcLegend;
   lv_obj_t *hmPauseRow;                           // "richieste" + "in pausa" (in giallo): due colori, due etichette
-  lv_obj_t *hmCdLegend, *hmCdBig, *hmCdUnit;       // conto alla rovescia in home (a destra del riquadro claude)
+  lv_obj_t *hmCdLegend, *hmCdBig, *hmCdUnit, *hmCdSec;   // conto alla rovescia in home (a destra del riquadro claude)
   bool hmCdOn;
   // pc
   lv_obj_t *pcLeg[4], *pcMain[4], *pcSub[3], *pcSpark[3], *pcSys, *pcDisks;
@@ -3468,10 +3468,11 @@ static void build_tile_home(lv_obj_t *t) {
     lv_obj_t *cb = tbox(t, 335, 115, 132, 74, "", C_BORDER, &g_ui.hmCdLegend);
     lv_obj_add_flag(cb, LV_OBJ_FLAG_CLICKABLE);                    // -> pagina del conto alla rovescia
     lv_obj_add_event_cb(cb, home_cd_cb, LV_EVENT_SHORT_CLICKED, NULL);
-    lv_obj_t *r = trow(cb, 12, 16);
+    lv_obj_t *r = trow(cb, 12, 9);                                  // numero grande (41) e sotto hh:mm:ss (20), sotto la legenda
     g_ui.hmCdBig = mklabel(r, "", F54, C_ACCENT);
     g_ui.hmCdUnit = mklabel(r, "", F14, C_MUTED);
     lv_obj_set_style_pad_bottom(g_ui.hmCdUnit, 6, 0);
+    g_ui.hmCdSec = tlabel(cb, F14, C_MUTED, 12, 51);
   }
   g_ui.hmPauseRow = trow(b, 0, 0);                  // allineata a destra come hmRight (bordo a x 441)
   mklabel(g_ui.hmPauseRow, TRS("in pausa", "paused"), F12, C_WARN);
@@ -5231,6 +5232,9 @@ static void home_cd_tick() {
   lv_obj_set_style_text_font(g_ui.hmCdBig, strlen(big) >= 3 ? F22 : F54, 0);
   label_set(g_ui.hmCdBig, big);
   label_set(g_ui.hmCdUnit, unit);
+  char sec[16] = "";                                          // sotto: ore, minuti e secondi che scorrono
+  if (d > 0) { long r = d % 86400; snprintf(sec, sizeof(sec), "%02ld:%02ld:%02ld", r / 3600, r % 3600 / 60, r % 60); }
+  label_set(g_ui.hmCdSec, sec);
   label_color(g_ui.hmCdUnit, big[0] ? C_MUTED : C_ACCENT);
   char lg[24];                                             // la legenda tiene 15 caratteri
   if (strlen(g_cd[i].title) > 15) snprintf(lg, sizeof(lg), "%.12s...", g_cd[i].title);
