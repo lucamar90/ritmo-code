@@ -1626,13 +1626,29 @@ static void handleApiPc() {
   g_web->sendHeader("Cache-Control", "no-store");
   g_web->send(200, "application/json", o);
 }
+// motivo dell'ultimo riavvio (per capire un riavvio inatteso senza collegare l'USB)
+static const char *reset_reason_str() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON:   return "accensione";
+    case ESP_RST_SW:        return "software";
+    case ESP_RST_PANIC:     return "errore (panic)";
+    case ESP_RST_INT_WDT:   return "watchdog interrupt";
+    case ESP_RST_TASK_WDT:  return "task watchdog";
+    case ESP_RST_WDT:       return "watchdog";
+    case ESP_RST_BROWNOUT:  return "calo di tensione";
+    case ESP_RST_DEEPSLEEP: return "risveglio";
+    case ESP_RST_USB:       return "usb";
+    default:                return "altro";
+  }
+}
 static void handleApiStatus() {
   String o;
   o.reserve(9000);
   time_t now = time(nullptr);
   char b[160];
   uint32_t updated = (g_lastOkMs && now > 1000000000L) ? (uint32_t)(now - (millis() - g_lastOkMs) / 1000) : 0;
-  snprintf(b, sizeof(b), "{\"fw\":\"" FW_VERSION "\",\"now\":%ld,\"ok\":%s,\"h5\":%.1f,\"d7\":%.1f,\"h5_reset\":%u,\"d7_reset\":%u,",
+  o += "{\"reset\":\""; o += reset_reason_str(); o += "\",\"uptime\":"; o += (unsigned long)(millis() / 1000); o += ",";
+  snprintf(b, sizeof(b), "\"fw\":\"" FW_VERSION "\",\"now\":%ld,\"ok\":%s,\"h5\":%.1f,\"d7\":%.1f,\"h5_reset\":%u,\"d7_reset\":%u,",
            (long)now, g_usage.ok ? "true" : "false", g_usage.h5, g_usage.d7,
            (unsigned)g_usage.h5ResetEpoch, (unsigned)g_usage.d7ResetEpoch);
   o += b;
@@ -6832,6 +6848,7 @@ void setup() {
   Serial.setTxTimeoutMs(0);
   delay(300);
   Serial.println("\n=== Ritmo Code (touch) ===");
+  Serial.printf("[BOOT] firmware %s, riavvio: %s\n", FW_VERSION, reset_reason_str());
 
   // Display
   Arduino_DataBus *bus = new Arduino_ESP32QSPI(TFT_CS, TFT_SCK, TFT_SDA0, TFT_SDA1, TFT_SDA2, TFT_SDA3);
@@ -6922,8 +6939,10 @@ void setup() {
   g_wifi.begin();
   // rete su un task del core 0 (8 KB di stack, come il loopTask che prima faceva HTTPS)
   g_httpsLock = xSemaphoreCreateMutex();
-  xTaskCreatePinnedToCore(net_task, "net", 8192, nullptr, 2, &g_netTask, 0);
-  xTaskCreatePinnedToCoreWithCaps(extra_task, "extra", 8192, nullptr, 1, nullptr, 0, MALLOC_CAP_SPIRAM);
+  // priorita' 0 come IDLE0: si alternano a ogni tick, cosi' l'attesa a vuoto di HTTPClient sulle risposte
+  // lente (l'API ha 15 s di timeout) non affama IDLE0 e il task watchdog (5 s) non riavvia piu'
+  xTaskCreatePinnedToCore(net_task, "net", 8192, nullptr, tskIDLE_PRIORITY, &g_netTask, 0);
+  xTaskCreatePinnedToCoreWithCaps(extra_task, "extra", 8192, nullptr, tskIDLE_PRIORITY, nullptr, 0, MALLOC_CAP_SPIRAM);
 
   boot_status(TRS("Connessione al WiFi...", "Connecting to WiFi..."));
   if (g_hasToken) {
