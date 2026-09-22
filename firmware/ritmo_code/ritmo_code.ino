@@ -7007,8 +7007,8 @@ void setup() {
   g_wifi.begin();
   // rete su un task del core 0 (8 KB di stack, come il loopTask che prima faceva HTTPS)
   g_httpsLock = xSemaphoreCreateMutex();
-  // priorita' 0 come IDLE0: si alternano a ogni tick, cosi' l'attesa a vuoto di HTTPClient sulle risposte
-  // lente (l'API ha 15 s di timeout) non affama IDLE0 e il task watchdog (5 s) non riavvia piu'
+  // priorita' 0 come IDLE0; l'attesa a vuoto di HTTPClient sulle risposte lente la risolvono i client
+  // di yield_client.h (da soli non bastava: il lock di lwIP alza di continuo la priorita' del task)
   xTaskCreatePinnedToCore(net_task, "net", 8192, nullptr, tskIDLE_PRIORITY, &g_netTask, 0);
   xTaskCreatePinnedToCoreWithCaps(extra_task, "extra", 8192, nullptr, tskIDLE_PRIORITY, nullptr, 0, MALLOC_CAP_SPIRAM);
 
