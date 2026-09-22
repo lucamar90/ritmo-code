@@ -3,6 +3,7 @@
 #include "certs.h"
 #include <Arduino.h>
 #include <WiFiClientSecure.h>
+#include "yield_client.h"
 #include <HTTPClient.h>
 
 #define H5U "anthropic-ratelimit-unified-5h-utilization"
@@ -24,7 +25,7 @@ static const char* RL_HEADERS[] = {
 static const int RL_HEADER_COUNT = 12;
 
 bool fetchUsage(const char* token, UsageData& out) {
-    WiFiClientSecure client;
+    YieldSecureClient client;
     client.setCACert(CA_BUNDLE);
 
     HTTPClient https;
@@ -91,7 +92,7 @@ bool fetchUsage(const char* token, UsageData& out) {
 }
 
 bool probeModel(const char* token, const char* modelId, ProbeResult& out) {
-    WiFiClientSecure client;
+    YieldSecureClient client;
     client.setCACert(CA_BUNDLE);
 
     HTTPClient https;

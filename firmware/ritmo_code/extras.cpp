@@ -2,6 +2,7 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include "yield_client.h"
 #include <Update.h>
 #include "certs.h"
 #include "config.h"
@@ -54,7 +55,7 @@ static void jarrTime(const String& s, const char* key, int n, int from, char* ou
 
 bool fetchWeather(float lat, float lon, WeatherData& out) {
   out.ok = false;
-  WiFiClientSecure client;
+  YieldSecureClient client;
   client.setCACert(CA_BUNDLE);           // open-meteo.com: catena Let's Encrypt -> ISRG Root X1
   HTTPClient http;
   char url[360];
@@ -123,7 +124,7 @@ static void jstrv(const String& s, const char* key, char* out, size_t sz, int fr
 bool fetchPcStats(const char* host, PcStats& out) {
   out.ok = false;
   if (!host || !host[0]) return false;
-  WiFiClient client;
+  YieldClient client;
   HTTPClient http;
   String url = String("http://") + host + "/data.json";
   if (!http.begin(client, url)) return false;
@@ -273,7 +274,7 @@ static String urlenc(const char* s) {
 
 bool postPcNotify(const char* host, const char* ev, const char* title, const char* msg) {
   if (!host || !host[0]) return false;
-  WiFiClient client;
+  YieldClient client;
   HTTPClient http;
   if (!http.begin(client, String("http://") + host + "/notify")) return false;
   http.setConnectTimeout(2000);
@@ -292,7 +293,7 @@ bool postPcNotify(const char* host, const char* ev, const char* title, const cha
 // basta il reindirizzamento di github.com/<repo>/releases/latest -> .../releases/tag/<tag>.
 bool fetchLatestRelease(char* tag, size_t tagSz, char* url, size_t urlSz) {
   tag[0] = 0; url[0] = 0;
-  WiFiClientSecure client;
+  YieldSecureClient client;
   client.setCACert(CA_BUNDLE);           // github.com: USERTrust ECC
   HTTPClient http;
   if (!http.begin(client, "https://github.com/" GITHUB_REPO "/releases/latest")) return false;
@@ -316,7 +317,7 @@ bool fetchLatestRelease(char* tag, size_t tagSz, char* url, size_t urlSz) {
 // Scarica il .bin (GitHub reindirizza su release-assets.githubusercontent.com) e lo scrive
 // nella partizione di aggiornamento; progress(0..100) a ogni blocco. true = pronto al riavvio.
 bool installFromUrl(const char* url, void (*progress)(int pct), String& err) {
-  WiFiClientSecure client;
+  YieldSecureClient client;
   client.setCACert(CA_BUNDLE);
   HTTPClient http;
   if (!http.begin(client, url)) { err = "indirizzo non valido"; return false; }
@@ -358,7 +359,7 @@ bool installFromUrl(const char* url, void (*progress)(int pct), String& err) {
 // ---- Pagina media: comandi e copertina dal PC Monitor ----
 bool postPcMedia(const char* host, const char* action, int sec) {
   if (!host || !host[0]) return false;
-  WiFiClient client;
+  YieldClient client;
   HTTPClient http;
   if (!http.begin(client, String("http://") + host + "/media")) return false;
   http.setConnectTimeout(2000);
@@ -371,7 +372,7 @@ bool postPcMedia(const char* host, const char* action, int sec) {
 }
 bool fetchPcCover(const char* host, uint8_t* buf, size_t len, uint32_t* id) {
   if (!host || !host[0] || !buf) return false;
-  WiFiClient client;
+  YieldClient client;
   HTTPClient http;
   if (!http.begin(client, String("http://") + host + "/media/cover.bin")) return false;
   http.setConnectTimeout(2000);
@@ -404,7 +405,7 @@ bool fetchPcCover(const char* host, uint8_t* buf, size_t len, uint32_t* id) {
 
 int fetchCalRange(const char* host, CalItem* out, int max) {
   if (!host || !host[0]) return -1;
-  WiFiClient client;
+  YieldClient client;
   HTTPClient http;
   if (!http.begin(client, String("http://") + host + "/calendar.json")) return -1;
   http.setConnectTimeout(3000);

@@ -3,10 +3,11 @@
 #include "certs.h"
 #include <Arduino.h>
 #include <WiFiClientSecure.h>
+#include "yield_client.h"
 #include <HTTPClient.h>
 
 bool fetchModelStatus(ModelStatus& out) {
-    WiFiClientSecure client;
+    YieldSecureClient client;
     client.setCACert(CA_BUNDLE);
 
     HTTPClient https;
