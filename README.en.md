@@ -9,7 +9,7 @@ No computer running, no app, no cloud.
 
 [Italiano](README.md) · **English**
 
-<img src="https://img.shields.io/badge/firmware-v3.9.11-D97757?style=for-the-badge" alt="firmware v3.9.11">
+<img src="https://img.shields.io/badge/firmware-v3.9.12-D97757?style=for-the-badge" alt="firmware v3.9.12">
 <img src="https://img.shields.io/badge/ESP32--S3-AXS15231B%20480×320-1B1A18?style=for-the-badge" alt="ESP32-S3 AXS15231B">
 <img src="https://img.shields.io/badge/LVGL-9.2.2-9BC08A?style=for-the-badge" alt="LVGL 9.2.2">
 <img src="https://img.shields.io/badge/accounts-up%20to%204-8E8B82?style=for-the-badge" alt="up to 4 accounts">
@@ -39,13 +39,15 @@ navigation (swipe ← → between pages, no physical button).
 | | |
 |---|---|
 | <img src="assets/screen-home.png" alt="Home"> **Home** — clock, date, weather (Open-Meteo), 5-hour and weekly summary, model status and a line for the connected PC. The device returns to it after a few minutes without touches. | <img src="assets/screen-weeks.png" alt="Weeks"> **Weeks** — peak reached in each of the last 8 weeks, with average and maximum. |
-| <img src="assets/screen-usage.png" alt="Now"> **Now** — percentage and block meter for the 5-hour and weekly windows, reset countdown and time, overall status and **weekly pace** (with a tick showing where you "should" be). | <img src="assets/screen-models.png" alt="Models"> **Models** — Clawd reacts to the state; a real probe for Haiku, Sonnet, Opus and Fable with result and latency, plus incidents from status.claude.com. |
-| <img src="assets/screen-window.png" alt="5-hour window"> **5-hour window** — usage in the current window and a dotted projection: tells you whether, at this pace, you run out before the reset. | <img src="assets/screen-rhythm.png" alt="Rhythm"> **Rhythm** — quota burned per hour of day, filtered by **today · 7d · 30d · all** (per-day history stored on the device). |
+| <img src="assets/screen-usage.png" alt="Now"> **Now** — percentage and block meter for the 5-hour and weekly windows, reset countdown and time, overall status and **weekly pace** (with a tick showing where you "should" be). Under the 5-hour countdown, the **forecast**: "at this pace: out 16:40" or "at reset ~70%". | <img src="assets/screen-models.png" alt="Models"> **Models** — Clawd reacts to the state; a real probe for Haiku, Sonnet, Opus and Fable with result and latency, plus incidents from status.claude.com. |
+| <img src="assets/screen-window.png" alt="5-hour window"> **5-hour window** — usage in the current window and a dotted projection: tells you whether, at this pace, you run out before the reset. | <img src="assets/screen-rhythm.png" alt="Rhythm"> **Rhythm** — quota burned per hour of day, filtered by **today · 7d · 30d · all** (per-day history stored on the device). The bottom line alternates with the period's **projects**: tap it for the full panel. |
 | <img src="assets/screen-pc.png" alt="PC"> **PC** — CPU (load, GHz, temperature, watts, busiest core), GPU (VRAM and hot spot), RAM with module temperature, network, disk, graphs that advance with every reading (4 minutes at 1 s), uptime, open Claude Code sessions, power draw and daily cost, drive temperature and remaining life. | <img src="assets/screen-web-pc.png" alt="Web panel, pc page"> **Web panel · pc** — the device's pages in the browser, with every drive listed. |
 | <img src="assets/screen-alert.png" alt="Threshold alert"> **Threshold alerts** — at 25, 50, 70 and 100% a full-screen animation with Clawd reacting to the level. | <img src="assets/screen-reset.png" alt="Reset alert"> **Reset alert** — when a window that went above 80% becomes available again. |
 | <img src="assets/screen-claude.png" alt="Claude is done"> **Claude Code** — with the hooks installed by the PC Monitor, Clawd tells you when Claude has finished (and how long it took) or needs a permission. It stays until you tap it or write to Claude again. | <img src="assets/screen-pomodoro.png" alt="Pomodoro"> **Timer and pomodoro** — tap the clock or the tomato on the home page: pomodoro 25/5, 50/10 or 15/3, or a 5 to 30-minute timer. Countdown under the clock, alert at the end of each phase, today's pomodoros. |
 | <img src="assets/screen-night.png" alt="Night clock"> **Night clock** — at night, after 30 seconds without touches, a full-screen clock in warm grey with date, 5-hour and weekly usage and upcoming rain. Dim or very dim; alternatively the screen turns off. | <img src="assets/screen-info.png" alt="Info"> **Info** — firmware version, hardware and credits. |
-| <img src="assets/screen-pause.png" alt="Timed pause"> **Pause requests** — the ❚❚ button in the header stops requests; a long press offers 30 min, 1 hour, until 7:00 or no limit. | <img src="assets/screen-settings.png" alt="Settings"> **Settings** — in five groups: **claude** (interval, accounts, models, token), **alerts** (Claude Code, sounds on pc, reset), **screen** (brightness and auto brightness, night mode and night clock, dimming, home, slideshow), **network and pc** (Wi-Fi, address, pc interval) and **system** (language, timezone, firmware update, info; *erase everything* needs two taps and the PIN). |
+| <img src="assets/screen-sessions.png" alt="Sessions"> **Sessions** — the Claude Code sessions open on the PC (up to 6): project, state in its colour (**needs you**, **done**, **working**, **idle**), how long and the tab title. A tap brings the session to the front on the PC; while you are on this page, a session that finishes or needs you blinks instead of opening the full-screen alert. | <img src="assets/screen-order.png" alt="Page order"> **Page order** — in *Settings → screen → page order* choose the sequence of the pages (home stays first). Default: home · now · sessions · models · 5h · rhythm · weeks · pc. |
+| <img src="assets/screen-projects.png" alt="Projects"> **Projects** — how much each project weighs on Claude Code in the chosen period (up to 8), with bar and percentage; the green dot marks the ones with a session working right now. Data from PC Monitor 1.9. | <img src="assets/screen-week.png" alt="Week alert"> **Week alert** — when the week is above 70, 85 or 95% and at this pace would run out at least 12 hours before the reset, Clawd warns you (once a week). |
+| <img src="assets/screen-pause.png" alt="Timed pause"> **Pause requests** — the ❚❚ button in the header stops requests; a long press offers 30 min, 1 hour, until 7:00 or no limit. | <img src="assets/screen-settings.png" alt="Settings"> **Settings** — in five groups: **claude** (interval, accounts, models, token), **alerts** (Claude Code, calendar, sounds on pc, week, reset, break), **screen** (brightness and auto brightness, night mode and night clock, dimming, home, slideshow, pull-down, page order), **network and pc** (Wi-Fi, address, pc interval, tab search for sessions) and **system** (language, timezone, firmware update, free space and RAM, info; *erase everything* needs two taps and the PIN). |
 
 > Double-tap **✻ ritmo-code** at the top to reopen the last alert (Claude, timer, pomodoro or threshold).
 
@@ -59,10 +61,10 @@ From any browser on the same network open **`http://<device-ip>/`**. The IP is u
 *Settings → local network* (on Mac and iPhone `http://ritmo-code.local/` works too).
 
 - Weather and connected PC in a box at the top.
-- 5-hour and weekly windows with countdown, status, weekly pace and forecast.
-- Same tabs as the device: **home · now · models · 5h · rhythm · weeks · pc**.
+- 5-hour and weekly windows with countdown, status, weekly pace and forecast (for both windows).
+- The device's tabs: **home · now · models · 5h · rhythm · weeks · pc** (the sessions page is on the device only).
 - Usage **history** filtered by **6h · 24h · all**.
-- **Hourly rhythm** filtered by **today · 7d · 30d · all**.
+- **Hourly rhythm** filtered by **today · 7d · 30d · all** and, below it, the period's **projects** with a dot on the ones working now.
 - Probed models: ID, result, latency, last check.
 - **Weekly peak** of the last 8 weeks.
 - Links to **edit model IDs**, set **city, PC and energy price** (`/home`) and **update the firmware**.
@@ -77,11 +79,15 @@ Anthropic, and the token is never exposed.
 ## Features
 
 - **5-hour and weekly windows** with reset times, projection and overall result (`ok` · `warning` · `blocked`).
+- **5-hour forecast** from the pace of the last 45 minutes, on the now page ("at this pace: out 16:40") and on the home, where "out 16:40" replaces the reset time when the quota runs out first.
+- **Week alert**: above 70, 85 or 95% (*Settings → alerts → week alert*, default 85%), if at this pace the weekly quota runs out at least 12 hours before the reset, a full-screen alert tells you when and how early. Once a week.
+- **Claude Code projects**: the PC Monitor reads the session logs (`~/.claude/projects`) and estimates how much each project weighs today, over 7 days, 30 days and all time (tokens weighted like the prices and by model family). A project is the git repository of the working folder, named after its remote; inside `clienti\` and `interno\` folders the subfolder counts. On the rhythm page and in the web panel.
 - **Weekly pace**: percentage used minus percentage of the week elapsed. Green when under pace, amber up to +15%, red beyond. Alternates with a **forecast**: "at reset you reach ~70%" or "at this pace ends thu 14:00".
 - **Weekly history**: the peak of every week, stored on the device per account.
 - Threshold **alerts** (25/50/70/100%) and a **reset** alert (can be turned off).
 - **Timer and pomodoro**: tap the clock or the tomato line on the home page. Three presets, **25/5**, **50/10** and **15/3** (focus/break in minutes, long break after the fourth), or a 5, 10, 15 or 30-minute timer. The countdown runs under the clock and in the header, Clawd announces the end of each phase full screen (at night too) and today's pomodoros are counted. It can be driven from the PC too (tray menu) and, with *Settings → alerts → claude during focus → at the break*, Claude alerts wait for the end of the focus.
 - **Calendar**: paste the secret iCal address of Google Calendar (or Outlook) in the web panel, page `/home`. The PC Monitor downloads the events every 5 minutes (recurring ones too); under the clock you see "in 12 min: client call" or "now: … until 16:00", and 5, 10 or 15 minutes before a full-screen alert arrives with a sound on the PC (*Settings → alerts → calendar alert*). Only the paired PC reads the link.
+- **Claude Code sessions**: a page with the sessions open on the PC and their state. A tap opens the session: the PC Monitor walks from the Claude process up to the terminal window and brings it to the front; in **Warp** it also steps through the tabs (Ctrl+PgDn) until the title matches (*Settings → network and pc → sessions: find the tab*). Under the box you see the result: *opened*, *switch tab* or *window not found*.
 - **Claude Code alerts**: Clawd tells you when Claude has finished a task (with how long it took) or needs a permission, via hooks and the [PC Monitor](#ritmo-code-pc-monitor) app. While Claude works, the ✻ in the header spins like in Claude Code and the home box shows how many sessions are **working**.
 - **Models**: one probe per cycle, rotating. **Model IDs are editable** on the device or in the browser, so a renamed model needs no rebuild.
 - **Night mode** during a time band (22, 23 or 00 → 07): a **full-screen clock**, dim or very dim, or the screen off, and by default **updates paused**. The first tap only wakes the screen, without pressing anything. **Dimming** after 1, 5 or 10 minutes without touches.
@@ -108,7 +114,8 @@ Anthropic, and the token is never exposed.
 A Windows app in [`ritmo-code-pc-monitor/`](ritmo-code-pc-monitor/) that sends the computer's
 statistics to the device: CPU, GPU, RAM, network, drives, uptime, open Claude Code sessions and,
 through the bundled [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor),
-temperatures, power, fans and drive health.
+temperatures, power, fans and drive health. Since 1.9 it also reads the Claude Code logs on the PC
+for the per-**project** breakdown (the device only gets names and percentages).
 
 Data stays on your home network: the device reads `http://<pc-ip>:8765/data.json`, which contains
 no file, process or window names. Available sensors depend on the hardware: temperatures, power and
@@ -188,13 +195,15 @@ The device can tell you when Claude Code **has finished** a task or **is waiting
 even while you are looking at another window or away from the desk.
 
 1. On **`http://127.0.0.1:8765/`**, box *avvisi di claude code*, press **Attiva gli avvisi**.
-   The app adds three [hooks](https://docs.claude.com/en/docs/claude-code/hooks) to
-   `~/.claude/settings.json` (`UserPromptSubmit`, `Stop`, `Notification`) and leaves the rest of the file
-   alone; the first time it keeps a copy in `settings.json.ritmo-bak`.
+   The app adds five [hooks](https://docs.claude.com/en/docs/claude-code/hooks) to
+   `~/.claude/settings.json` (`UserPromptSubmit`, `Stop`, `Notification` and, since 1.9, `SessionStart` and
+   `SessionEnd` for the sessions page) and leaves the rest of the file alone; the first time it keeps a
+   copy in `settings.json.ritmo-bak`. If the 1.8 hooks were already there, 1.9 adds the two new ones by itself.
 2. Start a new Claude Code session: hooks apply to sessions started afterwards.
 
 The hooks only call `http://127.0.0.1:8765`, and the app forwards the alert to the device, which accepts
-it only from the paired PC. The project folder name is sent, nothing from the session itself. The alert
+it only from the paired PC. What is sent is the project folder name and, for the sessions page, the
+session **title** (the few-word summary Claude Code gives the tab); nothing else from the session. The alert
 closes by itself after 5, 10 or 30 seconds (*Settings → close claude alert*, 30 s by default) or stays until
 you tap it or write to Claude again (*never*); at night, with the screen
 off or the night clock on, it does not show. In *Settings → claude code alerts* choose when to show it:
@@ -290,7 +299,8 @@ claude setup-token
 ```
 
 An **OAuth** login opens in the browser and you get a **long-lived token** `sk-ant-oat01-…`. It is a
-**Claude Code** token: a plain Messages API call with it is usually rejected. The device sends the
+**Claude Code** token: a plain Messages API call with it is usually rejected, and without Claude
+Code's system prompt the models above Haiku answer 429. The device sends that system prompt and the
 same headers as Claude Code (`anthropic-beta: oauth-2025-04-20` and its `User-Agent`), so the API
 answers with the rate-limit headers. You enter the token **once** from the browser and it stays
 **encrypted** on the device.
@@ -387,7 +397,10 @@ form and the same PIN.
   browser (model IDs, city, PC, energy price) and **pairing the PC app** require the PIN (5 wrong
   attempts lock for 5 minutes); **firmware updates** require the code shown on the screen.
 - The **Ritmo Code PC Monitor** app exposes only `/data.json` to the network (no file, process or
-  window names); its status page and pairing answer only to the PC itself.
+  window names; for Claude Code projects only the folder name and the percentage, for open sessions
+  their state and tab title, never contents); its status page and pairing answer only to the PC itself.
+  From the device it only accepts the media page commands and **open session**, which brings a window
+  to the front and at most presses Ctrl+PgDn in Warp.
 - `.env` and `.mcp.json` are in `.gitignore`: **no secrets go to git**.
 
 ---

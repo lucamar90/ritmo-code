@@ -7,7 +7,7 @@
 // ============================================================
 
 // ── Firmware ─────────────────────────────────────────────
-#define FW_VERSION              "3.9.11"
+#define FW_VERSION              "3.9.12"
 #define GITHUB_REPO             "lucamar90/ritmo-code"   // aggiornamenti: ultima release di GitHub
 
 // ── Display QSPI (AXS15231B) ─────────────────────────────
@@ -58,6 +58,11 @@
 #define API_TIMEOUT_MS          15000
 #define MESSAGES_ENDPOINT       "https://api.anthropic.com/v1/messages"
 #define ANTHROPIC_VERSION       "2023-06-01"
+// Con il token di Claude Code l'API accetta i modelli oltre Haiku solo da "Claude Code":
+// senza questo prompt di sistema risponde con un 429 finto, con uno User-Agent vecchio
+// con 400 ("version X or newer is required"). Alzare CLAUDE_CODE_UA quando lo chiede.
+#define CLAUDE_CODE_UA          "claude-code/2.1.281"
+#define CLAUDE_CODE_SYSTEM      "You are Claude Code, Anthropic's official CLI for Claude."
 #define PROBE_MODEL             "claude-haiku-4-5-20251001"
 // status.anthropic.com reindirizza qui — interrogare direttamente l'host canonico
 #define STATUS_ENDPOINT         "https://status.claude.com/api/v2/incidents/unresolved.json"

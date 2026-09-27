@@ -11,6 +11,7 @@ impostazioni. La pagina http://127.0.0.1:8765/ mostra lo stato e collega il PC a
 """
 
 import argparse
+import calendar
 import concurrent.futures
 import ctypes
 import ctypes.wintypes as wt
@@ -28,7 +29,7 @@ import winreg
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 APP = "ritmo-code-pc-monitor"
-VERSION = "1.8.0"
+VERSION = "1.9.0"
 DEFAULT_PORT = 8765
 CONFIG_DIR = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "RitmoCodePcMonitor")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
@@ -484,8 +485,9 @@ def pair_device(ip, pin, port):
 # ---------------------------------------------------------------------------
 
 CLAUDE_SETTINGS = os.path.join(os.path.expanduser("~"), ".claude", "settings.json")
-HOOK_EVENTS = {"UserPromptSubmit": "prompt", "Stop": "stop", "Notification": "notify"}
-HOOK_RE = re.compile(r"127\.0\.0\.1:\d+/claude/(prompt|stop|notify)")
+HOOK_EVENTS = {"UserPromptSubmit": "prompt", "Stop": "stop", "Notification": "notify",
+               "SessionStart": "start", "SessionEnd": "end"}          # inizio/fine: pagina sessioni (1.9)
+HOOK_RE = re.compile(r"127\.0\.0\.1:\d+/claude/(prompt|stop|notify|start|end)")
 
 
 def hook_command(port, kind):
@@ -566,6 +568,7 @@ class ClaudeEvents:
     def __init__(self):
         self.lock = threading.Lock()
         self.working = {}            # session_id -> inizio del turno
+        self.cwd = {}                # session_id -> cartella di lavoro (progetti attivi)
         self.last = None
         self.last_id = 0
 
@@ -579,6 +582,13 @@ class ClaudeEvents:
         session = str(payload.get("session_id", ""))
         with self.lock:
             self.working = {s: t for s, t in self.working.items() if now - t < self.STALE_S}
+            if payload.get("cwd"):
+                self.cwd[session] = str(payload["cwd"])
+            if kind in ("start", "end"):                 # solo per la pagina sessioni: nessun avviso
+                if kind == "end":
+                    self.working.pop(session, None)
+                    self.cwd.pop(session, None)
+                return None
             if kind == "prompt":
                 self.working[session] = now
                 ev, dur = "busy", -1
@@ -599,6 +609,12 @@ class ClaudeEvents:
             self.last = {"id": self.last_id, "ev": ev, "proj": self._project(payload), "dur": dur, "at": now}
             return dict(self.last)
 
+    def active_dirs(self):
+        """Cartelle delle sessioni al lavoro adesso."""
+        with self.lock:
+            now = time.time()
+            return [self.cwd[s] for s, t in self.working.items() if now - t < self.STALE_S and s in self.cwd]
+
     def fields(self):
         """Campi per data.json (piatti: il dispositivo ha un parser minimo)."""
         with self.lock:
@@ -613,6 +629,284 @@ class ClaudeEvents:
 
 
 CLAUDE = ClaudeEvents()
+
+
+# ---------------------------------------------------------------------------
+# Sessioni di Claude Code: pagina "sessioni" del dispositivo (stato, progetto, titolo, apri)
+# ---------------------------------------------------------------------------
+
+def process_table():
+    """{pid: (pid del genitore, nome dell'eseguibile in minuscolo)} di tutti i processi."""
+    kernel = ctypes.windll.kernel32
+    kernel.CreateToolhelp32Snapshot.restype = wt.HANDLE
+    snap = kernel.CreateToolhelp32Snapshot(0x2, 0)
+    if not snap or snap == wt.HANDLE(-1).value:
+        return {}
+    entry = _ProcessEntry32W()
+    entry.dwSize = ctypes.sizeof(entry)
+    table = {}
+    ok = kernel.Process32FirstW(snap, ctypes.byref(entry))
+    while ok:
+        table[entry.th32ProcessID] = (entry.th32ParentProcessID, entry.szExeFile.lower())
+        ok = kernel.Process32NextW(snap, ctypes.byref(entry))
+    kernel.CloseHandle(snap)
+    return table
+
+
+class _TcpRowOwnerPid(ctypes.Structure):
+    _fields_ = [("state", wt.DWORD), ("local_addr", wt.DWORD), ("local_port", wt.DWORD),
+                ("remote_addr", wt.DWORD), ("remote_port", wt.DWORD), ("pid", wt.DWORD)]
+
+
+def tcp_client_pid(client_port, server_port):
+    """Processo che ha aperto la connessione locale client_port -> server_port (il curl dell'hook)."""
+    iphlp = ctypes.windll.iphlpapi
+    size = wt.DWORD(0)
+    iphlp.GetExtendedTcpTable(None, ctypes.byref(size), False, 2, 5, 0)      # AF_INET, TCP_TABLE_OWNER_PID_ALL
+    buf = ctypes.create_string_buffer(size.value + 4096)
+    size = wt.DWORD(len(buf))
+    if iphlp.GetExtendedTcpTable(buf, ctypes.byref(size), False, 2, 5, 0) != 0:
+        return 0
+    n = ctypes.cast(buf, ctypes.POINTER(wt.DWORD))[0]
+    rows = ctypes.cast(ctypes.addressof(buf) + 4, ctypes.POINTER(_TcpRowOwnerPid))
+    port = lambda v: ((v & 0xFF) << 8) | ((v >> 8) & 0xFF)                 # ordine di rete
+    for i in range(n):
+        r = rows[i]
+        if port(r.local_port) == client_port and port(r.remote_port) == server_port:
+            return r.pid
+    return 0
+
+
+def _norm_title(t):
+    """Titolo confrontabile: senza i simboli iniziali (✳, spinner di Warp) e in minuscolo."""
+    t = str(t or "").strip()
+    while t and not t[0].isalnum():
+        t = t[1:]
+    return t.strip().lower()
+
+
+def top_windows():
+    """[(hwnd, pid, titolo)] delle finestre principali visibili."""
+    u = ctypes.windll.user32
+    out = []
+    proc = ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
+
+    def cb(hwnd, _):
+        if u.IsWindowVisible(hwnd) and not u.GetWindow(hwnd, 4):          # GW_OWNER: niente finestre figlie
+            n = u.GetWindowTextLengthW(hwnd)
+            if n:
+                b = ctypes.create_unicode_buffer(n + 1)
+                u.GetWindowTextW(hwnd, b, n + 1)
+                pid = wt.DWORD(0)
+                u.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                out.append((hwnd, pid.value, b.value))
+        return True
+    u.EnumWindows(proc(cb), 0)
+    return out
+
+
+def window_title(hwnd):
+    u = ctypes.windll.user32
+    n = u.GetWindowTextLengthW(hwnd)
+    b = ctypes.create_unicode_buffer(n + 1)
+    u.GetWindowTextW(hwnd, b, n + 1)
+    return b.value
+
+
+def bring_to_front(hwnd):
+    """Porta la finestra davanti (Windows lo consente dopo un tasto Alt simulato)."""
+    u = ctypes.windll.user32
+    if u.IsIconic(hwnd):
+        u.ShowWindow(hwnd, 9)                                               # SW_RESTORE
+    u.keybd_event(0x12, 0, 0, 0)                                            # Alt giu'/su: sblocca il primo piano
+    u.keybd_event(0x12, 0, 2, 0)
+    u.SetForegroundWindow(hwnd)
+    time.sleep(0.15)
+    return u.GetForegroundWindow() == hwnd
+
+
+TERMINAL_EXES = ("warp.exe", "windowsterminal.exe", "code.exe", "cursor.exe", "windsurf.exe", "wezterm-gui.exe",
+                 "alacritty.exe", "mintty.exe", "conemu64.exe", "tabby.exe", "hyper.exe")
+
+
+class Sessions:
+    """Una riga per sessione di Claude Code, dagli hook: stato, progetto, titolo della scheda, processo.
+
+    Stati: 0 ferma, 1 al lavoro, 2 aspetta te (permesso o domanda), 3 ha finito (non ancora vista).
+    Il processo claude.exe si ricava dal curl dell'hook; da li' si risale alla finestra del terminale.
+    """
+
+    STALE_S = 12 * 3600
+    MAX = 6
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.rows = {}               # session_id -> dict
+        self.titles = {}             # transcript -> (dimensione, titolo)
+        self.focus = None            # (chiave, esito, ora) dell'ultima apertura dal dispositivo
+
+    @staticmethod
+    def _claude_pid(pid, table):
+        for _ in range(8):                                  # curl -> shell -> claude.exe
+            if pid not in table:
+                return 0
+            if table[pid][1] == "claude.exe":
+                return pid
+            pid = table[pid][0]
+        return 0
+
+    def hook(self, kind, payload, client_pid=0):
+        sid = str(payload.get("session_id", ""))
+        if not sid:
+            return
+        now = time.time()
+        claude_pid = 0
+        if client_pid:
+            try:
+                claude_pid = self._claude_pid(client_pid, process_table())
+            except Exception:
+                claude_pid = 0
+        with self.lock:
+            if kind == "end":
+                self.rows.pop(sid, None)
+                return
+            r = self.rows.setdefault(sid, {"state": 0, "since": now, "cwd": "", "tr": "", "pid": 0})
+            if payload.get("cwd"):
+                r["cwd"] = str(payload["cwd"])
+            if payload.get("transcript_path"):
+                r["tr"] = str(payload["transcript_path"])
+            if claude_pid:
+                r["pid"] = claude_pid
+            r["at"] = now
+            new = r["state"]
+            if kind == "prompt":
+                new = 1
+            elif kind == "stop":
+                new = 3
+            elif kind == "notify":
+                ntype = str(payload.get("notification_type", ""))
+                message = str(payload.get("message", "")).lower()
+                if ntype in ("permission_prompt", "elicitation_dialog") or (not ntype and "permission" in message):
+                    new = 2
+            if new != r["state"]:
+                r["state"], r["since"] = new, now
+
+    def _title(self, path):
+        """Ultimo titolo della sessione ("ai-title" nel log): e' quello che il terminale mostra sulla scheda."""
+        if not path:
+            return ""
+        try:
+            size = os.path.getsize(path)
+            cached = self.titles.get(path)
+            if cached and cached[0] == size:
+                return cached[1]
+            with open(path, "rb") as f:
+                f.seek(max(0, size - 262144))
+                tail = f.read()
+            title = ""
+            for m in re.finditer(rb'"aiTitle"\s*:\s*"((?:[^"\\]|\\.)*)"', tail):
+                title = m.group(1)
+            title = json.loads(b'"' + title + b'"') if title else (cached[1] if cached else "")
+            self.titles[path] = (size, title)
+            return title
+        except (OSError, ValueError):
+            return ""
+
+    def _alive(self):
+        """Toglie le sessioni chiuse (processo finito) o senza eventi da troppo tempo."""
+        table = process_table()
+        now = time.time()
+        for sid in list(self.rows):
+            r = self.rows[sid]
+            if (r["pid"] and r["pid"] not in table) or now - r.get("at", now) > self.STALE_S:
+                del self.rows[sid]
+
+    def ordered(self):
+        with self.lock:
+            try:
+                self._alive()
+            except Exception:
+                pass
+            rank = {2: 0, 3: 1, 1: 2, 0: 3}
+            items = sorted(self.rows.items(), key=lambda kv: (rank[kv[1]["state"]], -kv[1].get("at", 0)))
+            return [(sid, dict(r)) for sid, r in items[:self.MAX]]
+
+    def fields(self):
+        now = time.time()
+        data = {}
+        rows = self.ordered()
+        data["ss_n"] = len(rows)
+        for i, (sid, r) in enumerate(rows):
+            title = re.sub(r'["\\]', "", self._title(r["tr"]))[:40]
+            data.update({f"ss{i}_k": sid[:8], f"ss{i}_p": PROJECTS._project(r["cwd"]) if r["cwd"] else "?",
+                         f"ss{i}_ti": title, f"ss{i}_s": r["state"], f"ss{i}_a": int(now - r["since"])})
+        if self.focus and now - self.focus[2] < 30:
+            data["ss_fk"], data["ss_fr"], data["ss_fa"] = self.focus[0], self.focus[1], int(now - self.focus[2])
+        return data
+
+    def _host_window(self, r):
+        """Finestra del terminale che ospita la sessione: prima per processo, poi per titolo, poi Warp."""
+        wins = top_windows()
+        table = process_table()
+        pid = r.get("pid", 0)
+        for _ in range(10):                               # claude.exe -> shell -> terminale
+            if not pid or pid not in table:
+                break
+            for hwnd, wpid, _t in wins:
+                if wpid == pid:
+                    return hwnd, table[pid][1]
+            pid = table[pid][0]
+        want = _norm_title(self._title(r["tr"]))
+        if want:
+            for hwnd, wpid, t in wins:
+                if want in _norm_title(t):
+                    return hwnd, table.get(wpid, (0, ""))[1]
+        for hwnd, wpid, _t in wins:
+            if table.get(wpid, (0, ""))[1] in TERMINAL_EXES:
+                return hwnd, table[wpid][1]
+        return 0, ""
+
+    def open(self, key, find_tab):
+        """Porta davanti la sessione. Esiti: ok (scheda giusta), win (finestra davanti, scheda da
+        cambiare), none (finestra non trovata). Con find_tab scorre le schede di Warp (Ctrl+PgGiu')."""
+        with self.lock:
+            match = [(sid, dict(r)) for sid, r in self.rows.items() if sid.startswith(key)]
+        if not match:
+            return self._done(key, "none")
+        sid, r = match[0]
+        hwnd, exe = self._host_window(r)
+        if not hwnd or not bring_to_front(hwnd):
+            return self._done(key, "none")
+        want = _norm_title(self._title(r["tr"]))
+        ok = bool(want) and want in _norm_title(window_title(hwnd))
+        if not ok and want and find_tab and exe == "warp.exe":
+            u = ctypes.windll.user32
+            first = window_title(hwnd)
+            for _ in range(15):
+                if u.GetForegroundWindow() != hwnd:       # l'utente ha cambiato finestra: mi fermo
+                    break
+                u.keybd_event(0x11, 0, 0, 0)              # Ctrl + PgGiu': scheda successiva
+                u.keybd_event(0x22, 0, 1, 0)
+                u.keybd_event(0x22, 0, 3, 0)
+                u.keybd_event(0x11, 0, 2, 0)
+                time.sleep(0.25)
+                t = window_title(hwnd)
+                if want in _norm_title(t):
+                    ok = True
+                    break
+                if t == first:                            # giro completo: non c'e'
+                    break
+        with self.lock:
+            if sid in self.rows and self.rows[sid]["state"] == 3:
+                self.rows[sid]["state"], self.rows[sid]["since"] = 0, time.time()   # vista: non piu' "finito"
+        return self._done(key, "ok" if ok else "win")
+
+    def _done(self, key, result):
+        self.focus = (key, result, time.time())
+        return result
+
+
+SESSIONS = Sessions()
 
 
 def push_event(event):
@@ -821,6 +1115,8 @@ def make_handler(sampler, lhm, port):
                 data.update(CLAUDE.fields())
                 data.update(CAL.fields())
                 data.update(MEDIA.fields())
+                data.update(PROJECTS.fields())
+                data.update(SESSIONS.fields())
                 if data.get("claude_sessions", -1) >= 0:          # mai piu' sessioni al lavoro di quelle aperte
                     data["cc_busy"] = min(data["cc_busy"], data["claude_sessions"])
                 data.update({"app": APP, "version": VERSION})
@@ -896,6 +1192,20 @@ def make_handler(sampler, lhm, port):
                         arg = None
                     MEDIA.command(action, arg)
                 return
+            if path == "/session" and (self._from_device() or self._local()):   # pagina sessioni: apri
+                try:
+                    length = min(int(self.headers.get("Content-Length", "0") or 0), 256)
+                    form = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8", "replace"))
+                except Exception:
+                    form = {}
+                key = re.sub(r"[^0-9a-f-]", "", (form.get("k") or [""])[0])[:8]
+                tab = (form.get("tab") or ["0"])[0] == "1"
+                self.send_response(204)
+                self.send_header("Connection", "close")
+                self.end_headers()
+                if len(key) >= 4:
+                    threading.Thread(target=SESSIONS.open, args=(key, tab), daemon=True).start()
+                return
             if path == "/notify" and self._from_device():   # avviso dal dispositivo: suono e notifica
                 try:
                     length = min(int(self.headers.get("Content-Length", "0") or 0), 4096)
@@ -944,6 +1254,12 @@ def make_handler(sampler, lhm, port):
                 self.send_response(204)
                 self.send_header("Connection", "close")
                 self.end_headers()
+                if isinstance(payload, dict) and kind in HOOK_EVENTS.values():
+                    try:
+                        cpid = tcp_client_pid(self.client_address[1], port)
+                    except Exception:
+                        cpid = 0
+                    SESSIONS.hook(kind, payload, cpid)
                 event = CLAUDE.handle(kind, payload if isinstance(payload, dict) else {}) if kind in HOOK_EVENTS.values() else None
                 if event:
                     threading.Thread(target=push_event, args=(event,), daemon=True).start()
@@ -1276,6 +1592,144 @@ class Calendar(threading.Thread):
 
 
 CAL = Calendar()
+
+
+# ---------------------------------------------------------------------------
+# Claude Code per progetto: quota stimata dai log di ~/.claude/projects
+# ---------------------------------------------------------------------------
+
+class ClaudeProjects(threading.Thread):
+    """Quanto pesa ogni progetto su Claude Code: oggi, 7 giorni, 30 giorni, tutti i log.
+
+    Dai log delle sessioni (una riga per risposta, con i token usati e la cartella di lavoro).
+    Il peso e' una stima del costo: token pesati come i prezzi (output x5, cache letta x0.1,
+    cache scritta x1.25) e per famiglia (Haiku 1, Sonnet 3, Opus/Fable 5). Il progetto e' la
+    cartella del repository git che contiene la cartella di lavoro, altrimenti la cartella stessa.
+    I file si rileggono solo dalla parte nuova.
+    """
+
+    INTERVAL = 60
+    ROOT = os.path.join(os.path.expanduser("~"), ".claude", "projects")
+
+    def __init__(self):
+        super().__init__(daemon=True)
+        self.lock = threading.Lock()
+        self.files = {}              # path -> [offset, {id messaggio: (epoch, progetto, peso)}]
+        self.repos = {}              # cartella di lavoro -> nome del progetto
+        self.text = {}
+
+    @staticmethod
+    def _weight(model, usage):
+        m = str(model).lower()
+        fam = 1 if "haiku" in m else 3 if "sonnet" in m else 5
+        tok = (usage.get("input_tokens", 0) + 5 * usage.get("output_tokens", 0)
+               + 1.25 * usage.get("cache_creation_input_tokens", 0) + 0.1 * usage.get("cache_read_input_tokens", 0))
+        return fam * tok
+
+    GROUPS = ("clienti", "interno")   # repository che raccolgono piu' lavori: conta la sottocartella
+
+    @staticmethod
+    def _remote_name(root):
+        """Nome del repository dal remote origin (la cartella locale puo' avere un nome vecchio)."""
+        try:
+            with open(os.path.join(root, ".git", "config"), encoding="utf-8", errors="replace") as f:
+                m = re.search(r'\[remote "origin"\][^\[]*?url\s*=\s*(\S+)', f.read())
+            return re.sub(r"\.git$", "", m.group(1).rstrip("/").split("/")[-1].split(":")[-1]) if m else ""
+        except OSError:
+            return ""
+
+    def _project(self, cwd):
+        name = self.repos.get(cwd)
+        if name is None:
+            path = cwd.rstrip("\\/")
+            root = path
+            while root:
+                if os.path.exists(os.path.join(root, ".git")):
+                    break
+                parent = os.path.dirname(root)
+                root = "" if parent == root else parent
+            if root:
+                parts = os.path.relpath(path, root).split(os.sep)
+                if len(parts) >= 2 and parts[0].lower() in self.GROUPS:
+                    name = parts[1]                            # es. Innova OS\clienti\sofia-ceramiche
+                else:
+                    name = self._remote_name(root) or os.path.basename(root)
+            else:
+                name = os.path.basename(path)
+            name = re.sub(r"[^0-9A-Za-z._ -]", "", name)[:16] or "?"
+            self.repos[cwd] = name
+        return name
+
+    def _read(self, path):
+        entry = self.files.setdefault(path, [0, {}])
+        try:
+            if os.path.getsize(path) < entry[0]:          # file riscritto: da capo
+                entry[0], entry[1] = 0, {}
+            with open(path, "rb") as f:
+                f.seek(entry[0])
+                data = f.read()
+        except OSError:
+            return
+        end = data.rfind(b"\n") + 1                       # solo righe complete
+        entry[0] += end
+        for line in data[:end].splitlines():
+            if b'"usage"' not in line or b'"assistant"' not in line:
+                continue
+            try:
+                d = json.loads(line)
+                msg = d["message"]
+                if d.get("type") != "assistant" or str(msg.get("model", "")).startswith("<"):
+                    continue
+                at = calendar.timegm(time.strptime(d["timestamp"][:19], "%Y-%m-%dT%H:%M:%S"))   # UTC
+                entry[1][msg.get("id") or d.get("uuid")] = (at, self._project(str(d.get("cwd", ""))),
+                                                            self._weight(msg.get("model", ""), msg["usage"]))
+            except (ValueError, KeyError, TypeError):
+                continue
+
+    def _update(self):
+        paths = []
+        for base, _, names in os.walk(self.ROOT):
+            paths += [os.path.join(base, n) for n in names if n.endswith(".jsonl")]
+        for path in paths:
+            self._read(path)
+        for gone in set(self.files) - set(paths):
+            del self.files[gone]
+        now = time.time()
+        lt = time.localtime(now)
+        since = [time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday, 0, 0, 0, 0, 0, -1)), now - 7 * 86400, now - 30 * 86400, 0]
+        totals = [{} for _ in since]
+        for _, msgs in self.files.values():
+            for at, proj, w in msgs.values():
+                for i, s in enumerate(since):
+                    if at >= s:
+                        totals[i][proj] = totals[i].get(proj, 0) + w
+        text = {}
+        for i, tot in enumerate(totals):
+            full = sum(tot.values())
+            if full > 0:
+                ranked = sorted(tot.items(), key=lambda kv: -kv[1])
+                text[f"cc_pj{i}"] = " · ".join(f"{p} {round(100 * w / full)}%" for p, w in ranked[:3])
+                # elenco per il pannello del dispositivo: "nome:percentuale;..." (i primi 8)
+                text[f"cc_pl{i}"] = ";".join(f"{p}:{round(100 * w / full)}" for p, w in ranked[:8])
+        with self.lock:
+            self.text = text
+
+    def run(self):
+        while True:
+            try:
+                self._update()
+            except Exception:
+                pass
+            time.sleep(self.INTERVAL)
+
+    def fields(self):
+        with self.lock:
+            data = dict(self.text)
+            data["cc_pa"] = ";".join(sorted({self._project(d) for d in CLAUDE.active_dirs()}))   # al lavoro adesso
+            return data
+
+
+PROJECTS = ClaudeProjects()
 
 
 # ---------------------------------------------------------------------------
@@ -1676,6 +2130,13 @@ def main():
         sys.exit(1)
     CAL.start()                         # calendario: link dal dispositivo, eventi ogni 5 minuti
     MEDIA.start()                       # brano in riproduzione per la pagina media del dispositivo
+    PROJECTS.start()                    # Claude Code per progetto, dai log delle sessioni
+    try:                                # hook della 1.8 gia' installati: aggiunge inizio/fine sessione
+        st = hooks_status(args.port)
+        if st.get("ok") and st.get("partial") and not st.get("installed"):
+            hooks_write(args.port, True)
+    except Exception:
+        pass
     if args.no_tray:
         server.serve_forever()
         return

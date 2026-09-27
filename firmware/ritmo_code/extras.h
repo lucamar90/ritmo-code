@@ -61,6 +61,11 @@ struct PcStats {
   int   ccDur, ccAge;      // secondi (ccDur -1 = sconosciuta)
   int   ccBusy;            // sessioni al lavoro
   int   actMin;            // minuti di uso continuo del PC (-1 = PC Monitor vecchio)
+  // Claude Code per progetto (PC Monitor 1.9): oggi, 7 g, 30 g, tutto, gia' in testo
+  // ("sofia-ceramiche 45% · ritmo-code 20% · ..."); vuoto = nessun dato
+  char  ccPj[4][72];
+  char  ccPl[4][176];      // elenco completo per il pannello: "nome:perc;nome:perc;..." (fino a 8)
+  char  ccPa[96];          // progetti con una sessione al lavoro adesso: "nome;nome"
   // media in riproduzione (PC Monitor 1.8): stato 0 niente, 1 in riproduzione, 2 in pausa
   int   mediaSt, mediaPos, mediaDur, mediaCv, mediaCtl;
   uint32_t mediaId;
@@ -68,6 +73,11 @@ struct PcStats {
   // prossimi eventi del calendario (letti dal PC Monitor dal link iCal); calN < 0 = calendario non impostato
   int   calN;
   struct { uint32_t s, e; char title[64]; } cal[3];
+  // sessioni di Claude Code (PC Monitor 1.9): stato 0 ferma, 1 al lavoro, 2 aspetta te, 3 ha finito
+  int   ssN;
+  struct { char k[10], p[18], ti[42]; int s, a; } ss[6];   // chiave, progetto, titolo, stato, secondi nello stato
+  char  ssFk[10], ssFr[6];  // ultima apertura: chiave ed esito (ok, win, none)
+  int   ssFa;               // secondi dall'apertura
 };
 
 bool fetchWeather(float lat, float lon, WeatherData& out);
@@ -84,4 +94,5 @@ struct CalItem { uint32_t s, e; uint8_t allday; char title[64]; };
 int fetchCalRange(const char* host, CalItem* out, int max);   // voci lette, -1 errore
 // pagina media: comando al PC (toggle, next, prev, seek, volup, voldown, mute) e copertina RGB565
 bool postPcMedia(const char* host, const char* action, int sec);
+bool postPcSession(const char* host, const char* key, bool findTab);   // apre la sessione sul PC
 bool fetchPcCover(const char* host, uint8_t* buf, size_t len, uint32_t* id);

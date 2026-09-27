@@ -34,7 +34,7 @@ async function simShots(browser) {
   await page.evaluate(() => {
     document.documentElement.style.setProperty('--zoom', 1);
     Object.assign(__sim.API, { h5: 62, d7: 38, r5min: 104, r7h: 101, ust: 'allowed' });
-    __sim.API.probe = [{ code: 200, ms: 850 }, { code: 200, ms: 1300 }, { code: 200, ms: 1900 }, { code: 429, ms: 700 }];
+    __sim.API.probe = [{ code: 200, ms: 850 }, { code: 200, ms: 1300 }, { code: 200, ms: 1900 }, { code: 200, ms: 700 }];
     __sim.boot(true);
   });
   await sleep(2600);
@@ -48,12 +48,22 @@ async function simShots(browser) {
     await el.screenshot({ path: path.join(OUT, `screen-${name}.png`) });
     console.log('ok', name);
   };
-  const names = ['home', 'usage', 'models', 'window', 'rhythm', 'weeks', 'pc'];
+  const names = ['home', 'usage', 'sessions', 'models', 'window', 'rhythm', 'weeks', 'pc'];   // ordine predefinito delle pagine
   for (let i = 0; i < names.length; i++) {
     await page.evaluate((k) => { __sim.setTile(k, false); __sim.refreshUiValues(); __sim.dashTick(); }, i);
     await sleep(700);
     await shot(names[i]);
   }
+  // pannello dei progetti (tocco sulla didascalia della pagina ritmo)
+  await page.evaluate(() => { __sim.setTile(__sim.tileOf(__sim.PG.RITMO), false); __sim.pjViewOpen(); });
+  await sleep(700);
+  await shot('projects');
+  await page.evaluate(() => { __sim.pjViewClose(); });
+  // avviso della settimana
+  await page.evaluate(() => { __sim.setTile(1, false); __sim.wkShow(); });
+  await sleep(1500);
+  await shot('week');
+  await page.evaluate(() => { __sim.noticeClose(); });
   await page.evaluate(() => { __sim.setTile(1, false); __sim.G.pendPeak = 91; __sim.showMoment(0, 0); });
   await sleep(1600);
   await shot('reset');
@@ -76,6 +86,10 @@ async function simShots(browser) {
   await page.evaluate(() => { __sim.pauseMenuClose(); __sim.requestState(__sim.ST.SETTINGS); });
   await sleep(800);
   await shot('settings');
+  await page.evaluate(() => { __sim.G.setGroup = 6; __sim.requestState(__sim.ST.SETTINGS); });
+  await sleep(800);
+  await shot('order');
+  await page.evaluate(() => { __sim.G.setGroup = 0; });
   await page.evaluate(() => __sim.requestState(__sim.ST.ABOUT));
   await sleep(900);
   await shot('info');
@@ -113,15 +127,21 @@ async function webShot(browser) {
     drives: [['Samsung SSD 970 EVO Plus 500GB', 47, 92]],
     hist: [0, 1, 2].map((k) => Array.from({ length: 240 }, (_, i) => Math.round([10, 6, 60][k] + [8, 5, 3][k] * Math.sin(i / [9, 13, 40][k])))) };
   const status = {
-    fw: '3.9.11', now, ok: true, h5: 62, d7: 38, h5_reset: now + 6240, d7_reset: now + 101 * 3600,
+    fw: '3.9.12', now, ok: true, h5: 62, d7: 38, h5_reset: now + 6240, d7_reset: now + 101 * 3600,
     updated: now - 95, refreshing: false, night: false, status: 'allowed', account: 'Studio',
     models: [
       { name: 'Haiku', id: 'claude-haiku-4-5-20251001', code: 200, ms: 850, up: true, mood: 1, age: 540 },
       { name: 'Sonnet', id: 'claude-sonnet-5', code: 200, ms: 1300, up: true, mood: 1, age: 1140 },
-      { name: 'Opus', id: 'claude-opus-5', code: 200, ms: 1900, up: true, mood: 1, age: 1740 },
-      { name: 'Fable', id: 'claude-fable-5-1', code: 429, ms: 700, up: true, mood: 2, age: 240 },
+      { name: 'Opus', id: 'claude-opus-5-5', code: 200, ms: 1900, up: true, mood: 1, age: 1740 },
+      { name: 'Fable', id: 'claude-fable-5-1', code: 200, ms: 700, up: true, mood: 1, age: 240 },
     ],
     hist, heat: [wave(4, 0), wave(22, 1), wave(70, 0), wave(160, -1)], heat_mode: 1, pause_until: 0,
+    fc5: [2, now + 5100, 100],
+    cc_pl: ['ritmo-code:46;sofia-ceramiche:31;extopia:14;flowers:9',
+      'sofia-ceramiche:34;ritmo-code:27;innova-os:18;extopia:12;flowers:6;metaboliq:3',
+      'innova-os:30;sofia-ceramiche:24;ritmo-code:19;metaboliq:11;extopia:8;flowers:5;pulizia-foto:3',
+      'innova-os:28;sofia-ceramiche:21;ritmo-code:17;metaboliq:10;ditta-fauci:9;extopia:7;flowers:5;pulizia-foto:3'],
+    cc_pa: 'ritmo-code',
     wx: { ok: true, city: 'Milano', temp: 22.3, code: 2, day: true, tmax: 22.9, tmin: 18.3, tmax2: 22.3, tmin2: 18.1, code2: 80,
       sunrise: '07:03', sunset: '19:30', rain_h0: 13, rain: [0, 3, 3, 3, 3, 5, 18, 45, 55, 30, 23, 25] },
     pc: PCD,

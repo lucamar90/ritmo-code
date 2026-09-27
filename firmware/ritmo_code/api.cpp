@@ -5,6 +5,7 @@
 #include <WiFiClientSecure.h>
 #include "yield_client.h"
 #include <HTTPClient.h>
+#include <esp_heap_caps.h>
 
 #define H5U "anthropic-ratelimit-unified-5h-utilization"
 #define H5R "anthropic-ratelimit-unified-5h-reset"
@@ -39,12 +40,13 @@ bool fetchUsage(const char* token, UsageData& out) {
     https.addHeader("anthropic-version", ANTHROPIC_VERSION);
     https.addHeader("anthropic-beta", "oauth-2025-04-20");
     https.addHeader("content-type", "application/json");
-    https.addHeader("User-Agent", "claude-code/2.1.5");
+    https.addHeader("User-Agent", CLAUDE_CODE_UA);
     https.setTimeout(API_TIMEOUT_MS);
     https.collectHeaders(RL_HEADERS, RL_HEADER_COUNT);
 
     String body = "{\"model\":\"" PROBE_MODEL "\","
                   "\"max_tokens\":1,"
+                  "\"system\":\"" CLAUDE_CODE_SYSTEM "\","
                   "\"messages\":[{\"role\":\"user\",\"content\":\".\"}]}";
 
     Serial.printf("[API] POST %s\n", MESSAGES_ENDPOINT);
@@ -52,7 +54,13 @@ bool fetchUsage(const char* token, UsageData& out) {
     Serial.printf("[API] HTTP %d\n", code);
 
     if (code <= 0) {
-        snprintf(out.error, sizeof(out.error), "http_%d", code);
+        // causa vera della connessione mancata (TLS, memoria, socket): "http_-1" da solo non basta
+        char le[48] = "";
+        client.lastError(le, sizeof(le));
+        snprintf(out.error, sizeof(out.error), "http_%d %s", code, le);
+        Serial.printf("[API] errore: %s (RAM interna %u KB, blocco max %u KB)\n", out.error,
+                      (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+                      (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024));
         out.ok = false;
         https.end();
         return false;
@@ -102,20 +110,35 @@ bool probeModel(const char* token, const char* modelId, ProbeResult& out) {
     https.addHeader("anthropic-version", ANTHROPIC_VERSION);
     https.addHeader("anthropic-beta", "oauth-2025-04-20");
     https.addHeader("content-type", "application/json");
-    https.addHeader("User-Agent", "claude-code/2.1.5");
+    https.addHeader("User-Agent", CLAUDE_CODE_UA);
     https.setTimeout(API_TIMEOUT_MS);
 
     String body = String("{\"model\":\"") + modelId + "\","
                   "\"max_tokens\":1,"
+                  "\"system\":\"" CLAUDE_CODE_SYSTEM "\","
                   "\"messages\":[{\"role\":\"user\",\"content\":\".\"}]}";
 
     uint32_t t0 = millis();
     int code = https.POST(body);
     uint32_t dt = millis() - t0;
+    // fuori dal 200 conserva error.message: un 400 "versione troppo vecchia" o
+    // "modello non supportato" dice molto piu' del solo codice
+    out.msg[0] = 0;
+    if (code < 0) client.lastError(out.msg, sizeof(out.msg));   // connessione mancata: errore TLS/rete
+    if (code > 0 && code != 200) {
+        String resp = https.getString();
+        int a = resp.indexOf("\"message\":\"");
+        if (a >= 0) {
+            a += 11;
+            int b = resp.indexOf('"', a);
+            if (b < 0) b = resp.length();
+            strlcpy(out.msg, resp.substring(a, b).c_str(), sizeof(out.msg));
+        }
+    }
     https.end();
 
     out.code = code;
     out.ms = (dt > 65000) ? 65000 : (uint16_t)dt;
-    Serial.printf("[PROBE] %s -> HTTP %d (%ums)\n", modelId, code, (unsigned)dt);
+    Serial.printf("[PROBE] %s -> HTTP %d (%ums) %s\n", modelId, code, (unsigned)dt, out.msg);
     return code == 200;
 }

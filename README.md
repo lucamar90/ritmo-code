@@ -9,7 +9,7 @@ Senza computer acceso, senza app, senza cloud.
 
 **Italiano** · [English](README.en.md)
 
-<img src="https://img.shields.io/badge/firmware-v3.9.11-D97757?style=for-the-badge" alt="firmware v3.9.11">
+<img src="https://img.shields.io/badge/firmware-v3.9.12-D97757?style=for-the-badge" alt="firmware v3.9.12">
 <img src="https://img.shields.io/badge/ESP32--S3-AXS15231B%20480×320-1B1A18?style=for-the-badge" alt="ESP32-S3 AXS15231B">
 <img src="https://img.shields.io/badge/LVGL-9.2.2-9BC08A?style=for-the-badge" alt="LVGL 9.2.2">
 <img src="https://img.shields.io/badge/account-fino%20a%204-8E8B82?style=for-the-badge" alt="fino a 4 account">
@@ -36,13 +36,15 @@ L'interfaccia è in stile terminale di Claude Code, in **italiano** o inglese, c
 | | |
 |---|---|
 | <img src="assets/screen-home.png" alt="Home"> **Home** — ora, data, meteo (Open-Meteo), riepilogo di 5h e settimana, stato dei modelli e riga del PC collegato. Ci torna da sola dopo qualche minuto senza tocchi. | <img src="assets/screen-weeks.png" alt="Settimane"> **Settimane** — picco raggiunto in ciascuna delle ultime 8 settimane, con media e massimo. |
-| <img src="assets/screen-usage.png" alt="Ora"> **Ora** — percentuale e barra a blocchi di 5h e settimana, conto alla rovescia e orario del reset, stato complessivo e **ritmo settimanale** (con la tacca "dove dovresti essere"). | <img src="assets/screen-models.png" alt="Modelli"> **Modelli** — Clawd reagisce allo stato; per Haiku, Sonnet, Opus e Fable una sonda reale con esito e latenza, più gli incidenti da status.claude.com. |
-| <img src="assets/screen-window.png" alt="Finestra 5h"> **Finestra 5h** — uso della finestra corrente e proiezione tratteggiata: ti dice se, a questo ritmo, finisci la quota prima del reset. | <img src="assets/screen-rhythm.png" alt="Ritmo"> **Ritmo** — quota consumata per ora del giorno, con filtro **oggi · 7g · 30g · tutto** (storico per giorno salvato sul dispositivo). |
+| <img src="assets/screen-usage.png" alt="Ora"> **Ora** — percentuale e barra a blocchi di 5h e settimana, conto alla rovescia e orario del reset, stato complessivo e **ritmo settimanale** (con la tacca "dove dovresti essere"). Sotto il conto alla rovescia della 5h, la **previsione**: "a questo ritmo: fine 16:40" oppure "al reset arrivi al ~70%". | <img src="assets/screen-models.png" alt="Modelli"> **Modelli** — Clawd reagisce allo stato; per Haiku, Sonnet, Opus e Fable una sonda reale con esito e latenza, più gli incidenti da status.claude.com. |
+| <img src="assets/screen-window.png" alt="Finestra 5h"> **Finestra 5h** — uso della finestra corrente e proiezione tratteggiata: ti dice se, a questo ritmo, finisci la quota prima del reset. | <img src="assets/screen-rhythm.png" alt="Ritmo"> **Ritmo** — quota consumata per ora del giorno, con filtro **oggi · 7g · 30g · tutto** (storico per giorno salvato sul dispositivo). La riga in basso alterna i **progetti** del periodo: toccala per il pannello completo. |
 | <img src="assets/screen-pc.png" alt="PC"> **PC** — CPU (carico, GHz, temperatura, watt, core più carico), GPU (VRAM e hot spot), RAM con temperatura dei moduli, rete, disco, grafici che avanzano a ogni lettura (4 minuti a 1 s), uptime, sessioni di Claude Code, consumo e costo al giorno, temperatura e vita residua dei dischi. | <img src="assets/screen-web-pc.png" alt="Pannello web, pagina pc"> **Pannello web · pc** — le stesse pagine del dispositivo nel browser, con i dischi uno per uno. |
 | <img src="assets/screen-alert.png" alt="Avviso di soglia"> **Avvisi di soglia** — a 25, 50, 70 e 100% un'animazione a schermo intero con Clawd che reagisce al livello. | <img src="assets/screen-reset.png" alt="Avviso di reset"> **Avviso di reset** — quando una finestra che aveva superato l'80% torna disponibile. |
 | <img src="assets/screen-claude.png" alt="Claude ha finito"> **Claude Code** — con gli hook installati dal PC Monitor, Clawd ti avvisa quando Claude ha finito (e dopo quanto) o aspetta un permesso. Resta finché non lo tocchi o riscrivi a Claude. | <img src="assets/screen-pomodoro.png" alt="Pomodoro"> **Timer e pomodoro** — tocca l'ora o il pomodoro nella home: pomodoro 25/5, 50/10 o 15/3, oppure timer da 5 a 30 minuti. Conto alla rovescia sotto l'ora, avviso a fine fase, pomodori di oggi. |
 | <img src="assets/screen-night.png" alt="Orologio notturno"> **Orologio notturno** — di notte, dopo 30 secondi senza tocchi, l'ora a tutto schermo in grigio caldo con data, uso di 5h e settimana e pioggia in arrivo. Luminosità tenue o molto tenue; in alternativa lo schermo si spegne. | <img src="assets/screen-info.png" alt="Info"> **Info** — versione del firmware, hardware e crediti. |
-| <img src="assets/screen-pause.png" alt="Pausa a tempo"> **Pausa richieste** — il tasto ❚❚ in testata ferma le richieste; tenuto premuto offre 30 min, 1 ora, fino alle 7:00 o senza limite. | <img src="assets/screen-settings.png" alt="Impostazioni"> **Impostazioni** — in cinque gruppi: **claude** (intervallo, account, modelli, token), **avvisi** (Claude Code, suoni sul pc, reset), **schermo** (luminosità e luminosità automatica, notte e orologio notturno, attenuazione, home, slideshow), **rete e pc** (Wi-Fi, indirizzo, intervallo pc) e **sistema** (lingua, fuso, aggiornamento firmware, info; *cancella tutto* chiede due tocchi e il PIN). |
+| <img src="assets/screen-sessions.png" alt="Sessioni"> **Sessioni** — le sessioni di Claude Code aperte sul PC (fino a 6): progetto, stato col suo colore (**aspetta te**, **ha finito**, **al lavoro**, **ferma**), da quanto e titolo della scheda. Un tocco porta la sessione in primo piano sul PC; se sei su questa pagina, chi finisce o ti aspetta lampeggia invece di aprire l'avviso a schermo intero. | <img src="assets/screen-order.png" alt="Ordine delle pagine"> **Ordine delle pagine** — in *Impostazioni → schermo → ordine pagine* scegli la sequenza delle pagine (la home resta la prima). Predefinito: home · ora · sessioni · modelli · 5h · ritmo · settimane · pc. |
+| <img src="assets/screen-projects.png" alt="Progetti"> **Progetti** — quanto pesa ogni progetto su Claude Code nel periodo scelto (fino a 8), con barra e percentuale; il pallino verde segna quelli con una sessione al lavoro adesso. Dati dal PC Monitor 1.9. | <img src="assets/screen-week.png" alt="Avviso settimana"> **Avviso settimana** — se la settimana supera il 70, 85 o 95% e a questo ritmo finirebbe almeno 12 ore prima del reset, Clawd ti avvisa (una volta a settimana). |
+| <img src="assets/screen-pause.png" alt="Pausa a tempo"> **Pausa richieste** — il tasto ❚❚ in testata ferma le richieste; tenuto premuto offre 30 min, 1 ora, fino alle 7:00 o senza limite. | <img src="assets/screen-settings.png" alt="Impostazioni"> **Impostazioni** — in cinque gruppi: **claude** (intervallo, account, modelli, token), **avvisi** (Claude Code, calendario, suoni sul pc, settimana, reset, pausa), **schermo** (luminosità e luminosità automatica, notte e orologio notturno, attenuazione, home, slideshow, tendina, ordine delle pagine), **rete e pc** (Wi-Fi, indirizzo, intervallo pc, ricerca della scheda per le sessioni) e **sistema** (lingua, fuso, aggiornamento firmware, spazio libero e RAM, info; *cancella tutto* chiede due tocchi e il PIN). |
 
 > Doppio tocco su **✻ ritmo-code** in alto: riapre l'ultimo avviso (Claude, timer, pomodoro o soglia).
 
@@ -56,10 +58,10 @@ Da qualsiasi browser sulla stessa rete apri **`http://<ip-del-dispositivo>/`**: 
 *Impostazioni → rete locale* (su Mac e iPhone funziona anche `http://ritmo-code.local/`).
 
 - Meteo e PC collegato in un riquadro in alto.
-- Finestra 5h e settimana con conto alla rovescia, stato, ritmo e previsione settimanale.
-- Stesse schede del dispositivo: **home · ora · modelli · 5h · ritmo · settimane · pc**.
+- Finestra 5h e settimana con conto alla rovescia, stato, ritmo e previsione (della 5h e della settimana).
+- Le schede del dispositivo: **home · ora · modelli · 5h · ritmo · settimane · pc** (la pagina sessioni c'è solo sul dispositivo).
 - **Andamento** dello storico con filtro **6h · 24h · tutto**.
-- **Ritmo orario** con filtro **oggi · 7g · 30g · tutto**.
+- **Ritmo orario** con filtro **oggi · 7g · 30g · tutto** e, sotto, i **progetti** del periodo con il pallino di quelli al lavoro.
 - Modelli sondati: ID, esito, latenza, ultimo controllo.
 - **Picco settimanale** delle ultime 8 settimane.
 - Collegamenti per **modificare gli ID dei modelli**, impostare **città, PC e prezzo dell'energia** (`/home`) e **aggiornare il firmware**.
@@ -75,10 +77,14 @@ nessuna richiesta in più ad Anthropic, e il token non viene mai esposto.
 
 - **Finestre 5h e settimanale** con reset, proiezione ed esito complessivo (`ok` · `attenzione` · `bloccato`).
 - **Ritmo settimanale**: percentuale usata meno percentuale di settimana trascorsa. Verde se sei sotto ritmo, ambra fino a +15%, rosso oltre. Alternato alla **previsione**: "al reset arrivi al ~70%" oppure "a questo ritmo finisce gio 14:00".
+- **Previsione della 5h** col ritmo degli ultimi 45 minuti, nella pagina ora ("a questo ritmo: fine 16:40") e in home, dove "finisce 16:40" prende il posto dell'orario di reset quando la quota finisce prima.
+- **Avviso settimana**: sopra il 70, 85 o 95% (*Impostazioni → avvisi → avviso settimana*, predefinito 85%), se a questo ritmo la quota settimanale finisce almeno 12 ore prima del reset, un avviso a schermo intero dice quando finisce e con quanto anticipo. Una volta a settimana.
+- **Progetti di Claude Code**: il PC Monitor legge i log delle sessioni (`~/.claude/projects`) e stima quanto pesa ogni progetto oggi, in 7 giorni, in 30 giorni e da sempre (token pesati come i prezzi e per famiglia del modello). Il progetto è il repository git della cartella di lavoro, con il nome del remote; nelle cartelle `clienti\` e `interno\` conta la sottocartella. Nella pagina ritmo e nel pannello web.
 - **Storico settimanale**: picco di ogni settimana, salvato sul dispositivo per account.
 - **Avvisi** di soglia (25/50/70/100%) e di **reset** (disattivabile).
 - **Timer e pomodoro**: tocca l'ora o la riga con il pomodoro nella home. Tre impostazioni pronte, **25/5**, **50/10** e **15/3** (focus/pausa in minuti, pausa lunga dopo il quarto), oppure timer da 5, 10, 15 o 30 minuti. Il conto alla rovescia scorre sotto l'ora e nella testata, a fine fase Clawd lo annuncia a schermo intero (anche di notte) e i pomodori di oggi restano contati. Si comanda anche dal PC (menu dell'icona) e, con *Impostazioni → avvisi → claude durante il focus → alla pausa*, gli avvisi di Claude aspettano la fine del focus.
 - **Calendario**: incolla il link segreto iCal di Google Calendar (o Outlook) nel pannello web, pagina `/home`. Il PC Monitor scarica gli eventi ogni 5 minuti (anche quelli ricorrenti); sotto l'ora compare "tra 12 min: call cliente" o "in corso: … fino 16:00", e 5, 10 o 15 minuti prima arriva un avviso a schermo intero con suono sul PC (*Impostazioni → avvisi → avviso calendario*). Il link lo legge solo il PC collegato.
+- **Sessioni di Claude Code**: una pagina con le sessioni aperte sul PC e il loro stato. Un tocco apre la sessione: il PC Monitor risale dal processo di Claude alla finestra del terminale e la porta davanti; in **Warp** scorre anche le schede (Ctrl+PgGiù) finché il titolo corrisponde (*Impostazioni → rete e pc → sessioni: cerca la scheda*). Sotto il riquadro compare l'esito: *aperta*, *cambia scheda* o *finestra non trovata*.
 - **Avvisi di Claude Code**: Clawd ti dice quando Claude ha finito un lavoro (con la durata) o aspetta un permesso, tramite gli hook e l'app [PC Monitor](#ritmo-code-pc-monitor). Mentre Claude lavora la ✻ in testata gira come in Claude Code e il riquadro della home dice quante sessioni sono **al lavoro**.
 - **Modelli**: una sonda per ciclo a rotazione. Gli **ID sono modificabili** dal dispositivo o dal browser: se Anthropic rinomina un modello non serve ricompilare.
 - **Modalità notte** in una fascia oraria (22, 23 o 00 → 07): **orologio a tutto schermo** con luminosità tenue o molto tenue, oppure schermo spento, e di predefinito **aggiornamenti in pausa**. Il primo tocco riaccende soltanto, senza premere nulla. **Attenuazione** dopo 1, 5 o 10 minuti senza tocchi.
@@ -106,7 +112,9 @@ nessuna richiesta in più ad Anthropic, e il token non viene mai esposto.
 App per Windows nella cartella [`ritmo-code-pc-monitor/`](ritmo-code-pc-monitor/) che invia al
 dispositivo le statistiche del computer: CPU, GPU, RAM, rete, dischi, uptime, sessioni di Claude
 Code aperte e, tramite [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor)
-incluso nel pacchetto, temperature, consumi, ventole e salute dei dischi.
+incluso nel pacchetto, temperature, consumi, ventole e salute dei dischi. Dalla 1.9 legge anche i
+log di Claude Code sul PC per la ripartizione per **progetto** (al dispositivo arrivano solo nomi e
+percentuali).
 
 I dati restano sulla rete di casa: il dispositivo legge `http://<ip-del-pc>:8765/data.json`, che
 non contiene nomi di file, processi o finestre. I sensori disponibili dipendono dall'hardware:
@@ -185,13 +193,16 @@ Il dispositivo può avvisarti quando Claude Code **ha finito** un lavoro o **asp
 anche se stai guardando un'altra finestra o ti sei alzato dalla scrivania.
 
 1. Nella pagina **`http://127.0.0.1:8765/`**, riquadro *avvisi di claude code*, premi **Attiva gli avvisi**.
-   L'app aggiunge tre [hook](https://docs.claude.com/en/docs/claude-code/hooks) a
-   `~/.claude/settings.json` (`UserPromptSubmit`, `Stop`, `Notification`) senza toccare il resto del file;
-   la prima volta ne salva una copia in `settings.json.ritmo-bak`.
+   L'app aggiunge cinque [hook](https://docs.claude.com/en/docs/claude-code/hooks) a
+   `~/.claude/settings.json` (`UserPromptSubmit`, `Stop`, `Notification` e, dalla 1.9, `SessionStart` e
+   `SessionEnd` per la pagina sessioni) senza toccare il resto del file; la prima volta ne salva una
+   copia in `settings.json.ritmo-bak`. Se c'erano già gli hook della 1.8, la 1.9 aggiunge da sola i due nuovi.
 2. Apri una nuova sessione di Claude Code: gli hook valgono per le sessioni avviate dopo.
 
 Gli hook chiamano solo `http://127.0.0.1:8765` e l'app inoltra l'avviso al dispositivo, che lo accetta
-solo dal PC collegato. Arriva il nome della cartella del progetto, niente del contenuto della sessione.
+solo dal PC collegato. Arrivano il nome della cartella del progetto e, per la pagina sessioni, il
+**titolo** della sessione (il riassunto di poche parole che Claude Code dà alla scheda); nient'altro del
+contenuto della sessione.
 A schermo l'avviso si chiude da solo dopo 5, 10 o 30 secondi (*Impostazioni → chiudi avviso claude*, 30 s
 predefinito) oppure resta finché non lo tocchi o scrivi di nuovo a Claude (*mai*); di
 notte, con lo schermo spento o l'orologio notturno, non compare. In *Impostazioni → avvisi claude code*
@@ -291,7 +302,8 @@ claude setup-token
 
 Si apre un login **OAuth** nel browser e ricevi un **token a lunga durata** `sk-ant-oat01-…`.
 È un token di **Claude Code**: una chiamata "normale" alla Messages API con questo token viene di
-solito rifiutata. Il dispositivo invia gli stessi header di Claude Code
+solito rifiutata, e senza il prompt di sistema di Claude Code i modelli oltre Haiku rispondono 429.
+Il dispositivo invia il prompt di sistema e gli stessi header di Claude Code
 (`anthropic-beta: oauth-2025-04-20` e il suo `User-Agent`), così la API risponde con gli header dei
 limiti. Il token si inserisce **una volta** dal browser e resta **cifrato** sul dispositivo.
 
@@ -390,7 +402,10 @@ lo stesso modulo e lo stesso PIN.
   modelli, città, PC, prezzo dell'energia) e il **collegamento dell'app PC** richiedono il PIN (5
   errori bloccano per 5 minuti); l'**aggiornamento firmware** richiede il codice mostrato sullo schermo.
 - L'app **Ritmo Code PC Monitor** espone in rete solo `/data.json` (niente nomi di file, processi o
-  finestre); la sua pagina di stato e il collegamento rispondono solo al PC stesso.
+  finestre; dei progetti di Claude Code solo il nome della cartella e la percentuale, delle sessioni
+  aperte stato e titolo della scheda, mai i contenuti); la sua pagina di stato e il collegamento
+  rispondono solo al PC stesso. Dal dispositivo accetta solo i comandi della pagina media e **apri
+  sessione**, che porta davanti una finestra e al massimo preme Ctrl+PgGiù in Warp.
 - `.env` e `.mcp.json` sono in `.gitignore`: **nessun segreto va su git**.
 
 ---

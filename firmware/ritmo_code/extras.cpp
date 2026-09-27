@@ -236,6 +236,27 @@ bool fetchPcStats(const char* host, PcStats& out) {
   out.ccAge  = (int)jnum(s, "cc_ev_age", 0, 9999);
   out.ccBusy = (int)jnum(s, "cc_busy");
   out.actMin = (int)jnum(s, "act_min", 0, -1);
+  for (int i = 0; i < 4; i++) {
+    char k[8]; snprintf(k, sizeof(k), "cc_pj%d", i);
+    jstrv(s, k, out.ccPj[i], sizeof(out.ccPj[i]));
+    snprintf(k, sizeof(k), "cc_pl%d", i);
+    jstrv(s, k, out.ccPl[i], sizeof(out.ccPl[i]));
+  }
+  jstrv(s, "cc_pa", out.ccPa, sizeof(out.ccPa));
+  out.ssN = (int)jnum(s, "ss_n", 0, 0);
+  if (out.ssN < 0) out.ssN = 0;
+  if (out.ssN > 6) out.ssN = 6;
+  for (int i = 0; i < out.ssN; i++) {
+    char k[10];
+    snprintf(k, sizeof(k), "ss%d_k", i);  jstrv(s, k, out.ss[i].k, sizeof(out.ss[i].k));
+    snprintf(k, sizeof(k), "ss%d_p", i);  jstrv(s, k, out.ss[i].p, sizeof(out.ss[i].p));
+    snprintf(k, sizeof(k), "ss%d_ti", i); jstrv(s, k, out.ss[i].ti, sizeof(out.ss[i].ti));
+    snprintf(k, sizeof(k), "ss%d_s", i);  out.ss[i].s = (int)jnum(s, k, 0, 0);
+    snprintf(k, sizeof(k), "ss%d_a", i);  out.ss[i].a = (int)jnum(s, k, 0, 0);
+  }
+  jstrv(s, "ss_fk", out.ssFk, sizeof(out.ssFk));
+  jstrv(s, "ss_fr", out.ssFr, sizeof(out.ssFr));
+  out.ssFa = (int)jnum(s, "ss_fa", 0, 99);
   out.mediaSt = (int)jnum(s, "media_st", 0, 0);
   if (out.mediaSt) {
     jstrv(s, "media_t", out.mediaTitle, sizeof(out.mediaTitle));
@@ -368,6 +389,20 @@ bool postPcMedia(const char* host, const char* action, int sec) {
   int code = http.POST(String("a=") + action + "&s=" + sec);
   http.end();
   Serial.printf("[MEDIA] %s -> %d\n", action, code);
+  return code >= 200 && code < 300;
+}
+// ---- Pagina sessioni: apri la sessione sul PC (in primo piano, e se richiesto la scheda di Warp) ----
+bool postPcSession(const char* host, const char* key, bool findTab) {
+  if (!host || !host[0] || !key || !key[0]) return false;
+  YieldClient client;
+  HTTPClient http;
+  if (!http.begin(client, String("http://") + host + "/session")) return false;
+  http.setConnectTimeout(2000);
+  http.setTimeout(2000);
+  http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+  int code = http.POST(String("k=") + key + "&tab=" + (findTab ? "1" : "0"));
+  http.end();
+  Serial.printf("[SESS] apri %s -> %d\n", key, code);
   return code >= 200 && code < 300;
 }
 bool fetchPcCover(const char* host, uint8_t* buf, size_t len, uint32_t* id) {

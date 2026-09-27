@@ -16,7 +16,7 @@ const C = {
   BORDER: '#3A3834', TEXT: '#E8E6DF', MUTED: '#8E8B82', FAINT: '#5C5A55', ACCENT: '#D97757',
   OK: '#9BC08A', WARN: '#E0B25A', BAD: '#E06C5A', BLUE: '#7DB9D6', LILAC: '#B7A6E0',
 };
-const CFG = { PIN_LEN: 4, MAX_PIN_ATTEMPTS: 10, LOCKOUT_SEC: 15, ACCT_MAX: 4, FW: '3.9.11' };
+const CFG = { PIN_LEN: 4, MAX_PIN_ATTEMPTS: 10, LOCKOUT_SEC: 15, ACCT_MAX: 4, FW: '3.9.12' };
 const DEMO_PIN = '1234';
 
 const $ = (id) => document.getElementById(id);
@@ -46,7 +46,7 @@ const pad2 = (n) => String(n).padStart(2, '0');
 
 // ---------- stato persistente (NVS simulata) ----------
 const TZ_ROME = 99;
-const P = { lang: 0, tz: TZ_ROME, poll: 120, slide: 0, heatm: 3, bri: 1, pinatt: 0, rstal: true, ccal: 2, ccclose: 2, ccfocus: false, pcsnd: true, night: 0, nightp: true, dim: 0, pause: false, pauseUntil: 0, clock: 0, nightclk: true, nightbri: 0, autobri: 0, brk: 0, shbtn: 0x0F };
+const P = { lang: 0, tz: TZ_ROME, poll: 120, slide: 0, heatm: 3, bri: 1, pinatt: 0, rstal: true, ccal: 2, ccclose: 2, ccfocus: false, pcsnd: true, night: 0, nightp: true, dim: 0, pause: false, pauseUntil: 0, clock: 0, nightclk: true, nightbri: 0, autobri: 0, brk: 0, wkal: 2, shbtn: 0x0F };
 // Claude oggi e minuti di PC in uso (come il firmware e il PC Monitor)
 const CCS = { n: 8, t: 4320, x: 840 };
 const durShort = (s) => s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s / 60)}m` : `${Math.floor(s / 3600)}h${pad2(Math.floor(s / 60) % 60)}`;
@@ -65,7 +65,7 @@ const G = {
   models: [
     { name: 'Haiku', defId: 'claude-haiku-4-5-20251001', id: 'claude-haiku-4-5-20251001', pr: { code: 0, ms: 0 } },
     { name: 'Sonnet', defId: 'claude-sonnet-5', id: 'claude-sonnet-5', pr: { code: 0, ms: 0 } },
-    { name: 'Opus', defId: 'claude-opus-5', id: 'claude-opus-5', pr: { code: 0, ms: 0 } },
+    { name: 'Opus', defId: 'claude-opus-5-5', id: 'claude-opus-5-5', pr: { code: 0, ms: 0 } },
     { name: 'Fable', defId: 'claude-fable-5-1', id: 'claude-fable-5-1', pr: { code: 0, ms: 0 } },
   ],
   probeIdx: 0,
@@ -80,7 +80,14 @@ const G = {
   winPeak: [0, 0], winReset: [0, 0], resetSeen: [0, 0], pendPeak: 0,
   curTile: 0, wipeArmed: false, acctDelArmed: -1, renameSlot: -1,
 };
-const HIST_MAX = 160, NDAYS = 31, NSEG = 18, NTILES = 7;
+const HIST_MAX = 160, NDAYS = 31, NSEG = 18, NTILES = 8;
+// pagine: l'ordine si cambia in impostazioni > schermo > ordine pagine (la home resta la prima)
+const PG = { HOME: 0, ORA: 1, SESS: 2, MODELS: 3, T5H: 4, RITMO: 5, WEEKS: 6, PC: 7 };
+const PAGE_DEF = [0, 1, 2, 3, 4, 5, 6, 7];
+const pageName = (pg) => ['home', TRS('ora', 'now'), TRS('sessioni', 'sessions'), TRS('modelli', 'models'), '5h', TRS('ritmo', 'rhythm'), TRS('settimane', 'weeks'), 'pc'][pg];
+const pageOrder = () => (Array.isArray(P.porder) && P.porder.length === NTILES ? P.porder : PAGE_DEF);
+const tileOf = (pg) => Math.max(0, pageOrder().indexOf(pg));
+const curPage = () => pageOrder()[G.curTile] ?? 0;
 
 // scenario del pannello (ciò che "risponderebbe" la API)
 const API = {
@@ -648,7 +655,7 @@ function apiFetch() {
   return u;
 }
 // ID che la API "conosce" nel simulatore: qualunque altro risponde 404 (-> chip "ID?")
-const KNOWN_MODELS = new Set(['claude-haiku-4-5-20251001', 'claude-sonnet-5', 'claude-opus-5', 'claude-fable-5-1',
+const KNOWN_MODELS = new Set(['claude-haiku-4-5-20251001', 'claude-sonnet-5', 'claude-opus-5-5', 'claude-opus-5', 'claude-fable-5-1',
   'claude-opus-4-8', 'claude-sonnet-4-5', 'claude-haiku-4-5']);
 function probeNextModel() {
   const i = G.probeIdx % 4; G.probeIdx++;
@@ -739,6 +746,7 @@ function buildWin(t, x, legend, key) {
   Object.assign(at.style, { width: '195px', display: 'flex', justifyContent: 'space-between' });
   UI['at' + key] = at;
   UI['cd' + key] = label(b, '', 22, C.TEXT, 14, 145); UI['cd' + key].style.fontWeight = '500';
+  if (key === 5) { UI.fc5 = label(b, '', 11, C.MUTED, 14, 174); Object.assign(UI.fc5.style, { width: '195px', overflow: 'hidden', whiteSpace: 'nowrap' }); }
 }
 function buildTileAgora(t) {
   buildWin(t, 13, TRS('finestra 5h', '5h window'), 5);
@@ -845,6 +853,19 @@ function buildTileTrend(t) {
   UI.trT1 = label(b, '', 11, C.FAINT, 0, TR.Y0 + TR.H + 8); Object.assign(UI.trT1.style, { left: 'auto', right: '14px' });
   UI.trCap = boxCaption(b);
 }
+// previsione della 5h col ritmo degli ultimi 45 min (come h5_forecast nel firmware)
+const FC_NONE = 0, FC_STABLE = 1, FC_OUT = 2, FC_REACH = 3, FC_DONE = 4;
+function h5Forecast() {
+  const now = nowEpoch(), we = G.usage.h5Reset;
+  if (!we || now >= we || !G.usage.ok) return { k: FC_NONE };
+  if (G.usage.h5 >= 99.5) return { k: FC_DONE };
+  const ws = we - 5 * 3600, first = G.hist.find((q) => q.t && q.t >= ws && q.t >= now - 2700);
+  if (!first || now <= first.t + 300) return { k: FC_NONE };
+  const rate = (G.usage.h5 - first.h5) / ((now - first.t) / 60);
+  if (rate <= 0.02) return { k: FC_STABLE };
+  const eta = now + Math.floor((100 - G.usage.h5) / rate * 60), end = G.usage.h5 + rate * ((we - now) / 60);
+  return { k: eta <= we ? FC_OUT : FC_REACH, eta, end };
+}
 function trendCap(txt, color) { setText(UI.trCap, `${GT} ${txt}`, color); }
 function trendRedraw() {
   if (!UI.trHist) return;
@@ -914,6 +935,8 @@ function buildTileHeat(t) {
   obj(b, 14, 168, 428, 1, { background: C.BORDER });
   for (const h of [0, 6, 12, 18, 23]) label(b, `${h}h`, 10, C.FAINT, 12 + h * 18, 174);
   UI.heatCap = boxCaption(b, `${GT} ${TRS('quota 5h consumata per ora locale', '5h quota burned per local hour')}`);
+  UI.heatCap.style.cursor = 'pointer';
+  UI.heatCap.addEventListener('click', (e) => { e.stopPropagation(); pjViewOpen(); });   // -> pannello dei progetti
 }
 function heatTabStyle() {
   (UI.heatTab || []).forEach((btn, i) => {
@@ -935,7 +958,9 @@ function heatRedraw() {
   if (UI.heatCap) {
     const tot = data.reduce((a, v) => a + v, 0), per = [TRS('oggi', 'today'), TRS('negli ultimi 7 giorni', 'in the last 7 days'), TRS('negli ultimi 30 giorni', 'in the last 30 days'), TRS('da sempre', 'all time')][P.heatm];
     UI.heatCap.innerHTML = pomo ? `${GT} ${tot} ${tot === 1 ? 'pomodoro' : TRS('pomodori', 'pomodoros')} ${per}, ${TRS('per ora locale', 'per local hour')}`
-      : `${GT} ${TRS('quota 5h consumata per ora locale', '5h quota burned per local hour')}`;
+      : (PC.ok && PC.ccPl[P.heatm].length && Math.floor(realMs() / 6000) % 2 === 1)        // ogni 6 s i progetti del periodo
+        ? `${GT} ${TRS('progetti', 'projects')}: ${PC.ccPl[P.heatm].slice(0, 3).map(([n, p]) => `${escapeHtml(n)} ${p}%`).join(' · ')}`
+        : `${GT} ${TRS('quota 5h consumata per ora locale', '5h quota burned per local hour')}`;
   }
   const mx = Math.max(1, ...data), cur = localParts(nowEpoch()).h;
   UI.heat.forEach((bar, h) => {
@@ -1001,7 +1026,41 @@ const WX = { ok: true, city: 'Milano', temp: 22, code: 2, day: true, tmax: 23, t
   sunrise: '07:03', sunset: '19:30', rainH0: 13, rain: [0, 3, 3, 3, 3, 5, 18, 45, 55, 30, 23, 25],
   // settimana (indice 0 = oggi): massima, minima, codice, pioggia massima %
   week: [[23, 18, 2, 45], [22, 18, 80, 70], [20, 15, 61, 85], [21, 14, 3, 20], [24, 15, 1, 5], [26, 16, 0, 0], [25, 17, 95, 60]] };
-const PC = { ok: true, host: '192.168.1.10:8765', cpu: 12, cpuT: 56, ram: 61, gpu: 4, gpuT: 35, disk: 57 };
+const PC = { ok: true, host: '192.168.1.10:8765', cpu: 12, cpuT: 56, ram: 61, gpu: 4, gpuT: 35, disk: 57,
+  // Claude Code per progetto (PC Monitor 1.9): oggi, 7 g, 30 g, tutto; ccPa = al lavoro adesso
+  ccPl: [[['ritmo-code', 46], ['sofia-ceramiche', 31], ['extopia', 14], ['flowers', 9]],
+         [['sofia-ceramiche', 34], ['ritmo-code', 27], ['innova-os', 18], ['extopia', 12], ['flowers', 6], ['metaboliq', 3]],
+         [['innova-os', 30], ['sofia-ceramiche', 24], ['ritmo-code', 19], ['metaboliq', 11], ['extopia', 8], ['flowers', 5], ['pulizia-foto', 3]],
+         [['innova-os', 28], ['sofia-ceramiche', 21], ['ritmo-code', 17], ['metaboliq', 10], ['ditta-fauci', 9], ['extopia', 7], ['flowers', 5], ['pulizia-foto', 3]]],
+  ccPa: ['ritmo-code'] };
+let PJV = null;
+function pjViewClose() { if (PJV) { PJV.remove(); PJV = null; } }
+function pjViewOpen() {
+  if (P.heats || 0) return;                                   // scheda pomodoro: niente progetti
+  pjViewClose();
+  const s = obj(scr, 0, 0, 480, 320, { background: C.BG, zIndex: 60, cursor: 'pointer' });
+  s.addEventListener('click', (e) => { e.stopPropagation(); pjViewClose(); });
+  PJV = s;
+  tbox(s, 10, 14, 460, 296, TRS('progetti · claude code', 'projects · claude code'));
+  label(s, TRS('stima dai log', 'estimate from logs'), 11, C.MUTED, 30, 47);
+  [TRS('oggi', 'today'), TRS('7g', '7d'), TRS('30g', '30d'), TRS('tutto', 'all')].forEach((n, i) => {
+    const on = i === P.heatm;
+    const b = tbtn(s, n, 60, 26, (e) => { if (e) e.stopPropagation(); P.heatm = i; heatBtnStyle(); heatRedraw(); pjViewOpen(); },
+      { size: 12, color: on ? C.ACCENT : C.MUTED, border: on ? C.ACCENT : C.BORDER });
+    Object.assign(b.style, { left: (190 + i * 66) + 'px', top: '40px', background: on ? mix(C.ACCENT, C.BG, 40) : 'transparent' });
+  });
+  (PC.ccPl[P.heatm] || []).slice(0, 8).forEach(([name, pct], row) => {
+    const y = 80 + row * 25, act = PC.ccPa.includes(name);
+    if (act) rrect(s, 28, y + 5, 8, 8, 4, C.OK);
+    const nm = label(s, escapeHtml(name), 14, act || !row ? C.TEXT : C.MUTED, 42, y);
+    Object.assign(nm.style, { width: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' });
+    rrect(s, 200, y + 4, 190, 10, 2, C.TRACK);
+    rrect(s, 200, y + 4, Math.max(2, Math.round(pct * 1.9)), 10, 2, row ? mix(C.ACCENT, C.BG, 150) : C.ACCENT);
+    const pl = label(s, `${pct}%`, 14, row ? C.MUTED : C.ACCENT, 398, y); Object.assign(pl.style, { width: '50px', textAlign: 'right' });
+  });
+  if (PC.ccPa.length) { rrect(s, 30, 293, 8, 8, 4, C.OK); label(s, TRS('al lavoro adesso', 'working now'), 11, C.MUTED, 44, 289); }
+  label(s, TRS('[ tocca per chiudere ]', '[ tap to close ]'), 11, C.FAINT, 290, 289);
+}
 function wxGroup(c) { if (c === 0) return 0; if (c <= 2) return 1; if (c === 3) return 2; if (c === 45 || c === 48) return 3;
   if ((c >= 71 && c <= 77) || c === 85 || c === 86) return 5; if (c >= 95) return 6; if (c >= 51) return 4; return 2; }
 function wxDesc(c) {
@@ -1165,7 +1224,7 @@ function buildTileHome(t) {
   const cdi = cdHomeIdx(nowEpoch()); h.cdOn = cdi >= 0;
   const b = tbox(t, 13, 115, h.cdOn ? 314 : 454, 74, 'claude'); h.clBox = b;
   const goTo = (el, tile) => { el.style.cursor = 'pointer'; el.addEventListener('click', (e) => { if (realMs() - lastDragAt < 300) return; e.stopPropagation(); setTile(tile, true); }); };
-  goTo(b, 1);                                                      // riquadro claude -> pagina ora
+  goTo(b, tileOf(PG.ORA));                                         // riquadro claude -> pagina ora
   h.row = [0, 1].map((i) => {
     const y = 13 + i * 30;
     label(b, i ? TRS('sett.', 'week') : '5h', 14, C.MUTED, 13, y);
@@ -1196,7 +1255,7 @@ function buildTileHome(t) {
     obj(b, 9, 10, 22, 21, { border: `2px solid ${C.TEXT}`, borderRadius: '3px', boxSizing: 'border-box' }); rrect(b, 9, 10, 22, 6, 2, C.BLUE);
     rrect(b, 13, 7, 2, 6, 1, C.TEXT); rrect(b, 25, 7, 2, 6, 1, C.TEXT); for (let k = 0; k < 4; k++) rrect(b, 13 + (k % 2) * 8, 19 + Math.floor(k / 2) * 5, 4, 3, 0, C.MUTED);
   });
-  goTo(h.pcBox, 6);                                                // riquadro pc -> pagina pc
+  goTo(h.pcBox, tileOf(PG.PC));                                    // riquadro pc -> pagina pc
   h.pc = label(h.pcBox, '', 14, C.TEXT, 13, 9);
   homeRedraw();
 }
@@ -1234,7 +1293,9 @@ function homeRedraw() {
     const r = h.row[i], col = gradColor(v || 0);
     setBlocks(r.blk, G.usage.ok ? v : 0, col);
     setText(r.pct, G.usage.ok ? `${Math.round(v)}%` : '--', col);
-    setText(r.info, !G.usage.ok ? '' : i === 0 ? `reset ${fmtHm(re)}` : TRS(`reset tra ${fmtEta(re)}`, `reset in ${fmtEta(re)}`));
+    const f = i === 0 ? h5Forecast() : { k: FC_NONE };
+    if (G.usage.ok && f.k === FC_OUT) setText(r.info, TRS(`finisce ${fmtHm(f.eta)}`, `out ${fmtHm(f.eta)}`), f.eta - nowEpoch() < 3600 ? C.BAD : C.WARN);
+    else setText(r.info, !G.usage.ok ? '' : i === 0 ? `reset ${fmtHm(re)}` : TRS(`reset tra ${fmtEta(re)}`, `reset in ${fmtEta(re)}`), C.MUTED);
   });
   const [w, wc] = statusWord(G.usage.statusOverall);
   setText(h.row[0].right, `${TRS('stato', 'status')} ${w}`, wc);
@@ -1261,6 +1322,60 @@ const PCH = [[], [], []];
     PCH[2].push(Math.round(57 + 3 * Math.sin(i / 30)));
   }
 })();
+// ---- pagina sessioni: le sessioni di Claude Code dal PC Monitor 1.9 (dati di esempio) ----
+// stato 0 ferma, 1 al lavoro, 2 aspetta te, 3 ha finito
+const SESS = [
+  { k: 'a1b2c3d4', p: 'ritmo-code', ti: 'Pagina sessioni e ordine delle pagine', s: 2, a: 40 },
+  { k: 'b2c3d4e5', p: 'sofia-ceramiche', ti: 'Navigazione e task ondata 1', s: 3, a: 190 },
+  { k: 'c3d4e5f6', p: 'innova-os', ti: 'Teste di moro Shopify con Avada SEO', s: 1, a: 610 },
+  { k: 'd4e5f6a7', p: 'extopia', ti: 'Spazio poi: plugin QR', s: 1, a: 95 },
+  { k: 'e5f6a7b8', p: 'flowers', ti: 'Report di settembre', s: 0, a: 3700 },
+];
+const sessWord = (st) => [TRS('ferma', 'idle'), TRS('al lavoro', 'working'), TRS('aspetta te', 'needs you'), TRS('ha finito', 'done')][st];
+const sessCol = (st) => [C.MUTED, C.OK, C.WARN, C.ACCENT][st];
+function buildTileSess(t) {
+  UI.ss = [];
+  for (let i = 0; i < 6; i++) {
+    const x = 13 + (i % 3) * 154, y = 14 + Math.floor(i / 3) * 116;
+    const b = tbox(t, x, y, 146, 108, ' ');
+    b.style.cursor = 'pointer';
+    const st = label(b, '', 14, C.MUTED, 11, 12);
+    const age = label(b, '', 11, C.FAINT, 11, 14); Object.assign(age.style, { width: '122px', textAlign: 'right' });
+    const ti = label(b, '', 11, C.MUTED, 11, 38); Object.assign(ti.style, { width: '124px', height: '32px', overflow: 'hidden', whiteSpace: 'normal', lineHeight: '16px' });
+    const ft = label(b, '', 11, C.FAINT, 11, 80);
+    b.addEventListener('click', (e) => {
+      if (realMs() - lastDragAt < 300 || !SESS[i]) return;
+      e.stopPropagation(); touched();
+      G.ssBlink = (G.ssBlink || []).filter((k) => k !== SESS[i].k);
+      setText(ft, TRS('✓ aperta', '✓ opened'), C.OK);
+      setTimeout(() => setText(ft, ''), 4000);
+      slog(`[SIM] apri la sessione ${SESS[i].p} sul PC (Warp in primo piano, poi la scheda)`);
+    });
+    UI.ss.push({ b, st, age, ti, ft });
+  }
+  sessRedraw();
+}
+function sessRedraw() {
+  if (!UI.ss) return;
+  UI.ss.forEach((u, i) => {
+    const ss = SESS[i];
+    if (!ss) {
+      u.b.style.borderColor = C.TRACK; u.b._lg.textContent = ' ';
+      setText(u.st, i ? '' : TRS('nessuna sessione', 'no sessions'), C.FAINT); setText(u.age, ''); setText(u.ti, ''); return;
+    }
+    const col = sessCol(ss.s);
+    u.b.style.borderColor = ss.s ? col : C.BORDER;
+    u.b._lg.textContent = ss.p; u.b._lg.style.color = ss.s ? col : C.MUTED;
+    setText(u.st, sessWord(ss.s), col);
+    const a = ss.a + Math.floor(realMs() / 1000) % 60;
+    setText(u.age, a < 60 ? `${a}s` : a < 3600 ? `${Math.floor(a / 60)}m` : `${Math.floor(a / 3600)}h${pad2(Math.floor(a % 3600 / 60))}`);
+    setText(u.ti, escapeHtml(ss.ti));
+    const blink = (G.ssBlink || []).includes(ss.k) && Math.floor(realMs() / 400) % 2 === 0;
+    u.b.style.background = blink ? mix(col, C.BG, 60) : 'transparent';
+  });
+}
+// demo: la sessione i lampeggia come quando finisce o aspetta te mentre sei sulla pagina
+function ssBlink(i) { if (SESS[i]) { G.ssBlink = [...(G.ssBlink || []), SESS[i].k]; setTimeout(() => { G.ssBlink = (G.ssBlink || []).filter((k) => k !== SESS[i].k); }, 60000); } }
 function buildTilePc(t) {
   const U = UI.pc = {};
   const sparkBox = (x, y, w, h, sy, sh, col, withSub) => {
@@ -1337,11 +1452,10 @@ function pauseMenuOpen() {
   cancel.style.left = '20px'; cancel.style.top = '136px';
 }
 
-const TAB_PATH = ['/home', '/usage', '/models', '/window', '/rhythm', '/weeks', '/pc'];
 function hdrIdentity() {
   if (!UI.hdrId) return;
   const badge = accountCount() > 1 ? ` <span style="color:${C.ACCENT}">@${escapeHtml(G.accts.label[G.accts.active].slice(0, 10))}</span>` : '';
-  UI.hdrId.innerHTML = `<span class="hspark" style="color:${C.ACCENT}">✻</span> ritmo-code <span style="color:${C.FAINT}">${TAB_PATH[G.curTile]}</span>${badge}`;
+  UI.hdrId.innerHTML = `<span class="hspark" style="color:${C.ACCENT}">✻</span> ritmo-code${badge}`;   // niente /pagina: si sovrapponeva allo stato
 }
 // Claude al lavoro (sessioni dal PC Monitor): legenda del riquadro claude e ✻ che gira
 const SPARK_SPIN = ['·', '✢', '✳', '✶', '✻', '✽', '✻', '✶', '✳', '✢'];
@@ -1634,10 +1748,11 @@ function uiMain() {
   const track = obj(tv, 0, 0, 480 * NTILES, 251); track.classList.add('track');
   UI.tv = tv; UI.track = track;
   const tiles = Array.from({ length: NTILES }, () => { const t = document.createElement('div'); t.className = 'tile'; track.appendChild(t); return t; });
-  buildTileHome(tiles[0]); buildTileAgora(tiles[1]); buildTileModels(tiles[2]); buildTileTrend(tiles[3]); buildTileHeat(tiles[4]); buildTileWeeks(tiles[5]); buildTilePc(tiles[6]);
+  const BUILD = [buildTileHome, buildTileAgora, buildTileSess, buildTileModels, buildTileTrend, buildTileHeat, buildTileWeeks, buildTilePc];
+  pageOrder().forEach((pg, i) => BUILD[pg](tiles[i]));
 
   // schede in basso: anche toccabili
-  const names = ['home', TRS('ora', 'now'), TRS('modelli', 'models'), '5h', TRS('ritmo', 'rhythm'), TRS('settimane', 'weeks'), 'pc'];
+  const names = pageOrder().map(pageName);
   const bar = obj(scr, 0, 294, 480, 21, { display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '4px', fontSize: '12px' });
   UI.tabs = names.map((n, i) => {
     const tb = document.createElement('div'); bar.appendChild(tb); tb.className = 'tab';
@@ -1656,6 +1771,17 @@ function dashTick() {
   const at = (epoch) => `<span>${TRS('reset tra', 'resets in')}</span><span>${fmtClock(epoch).toLowerCase()}</span>`;
   setText(UI.cd5, fmtEta(G.usage.h5Reset)); setText(UI.at5, at(G.usage.h5Reset));
   setText(UI.cd7, fmtEta(G.usage.d7Reset)); setText(UI.at7, at(G.usage.d7Reset));
+  if (UI.fc5) {
+    const f = h5Forecast();
+    if (f.k === FC_OUT) setText(UI.fc5, TRS(`a questo ritmo: fine ${fmtHm(f.eta)}`, `at this pace: out ${fmtHm(f.eta)}`), f.eta - nowEpoch() < 3600 ? C.BAD : C.WARN);
+    else if (f.k === FC_REACH) setText(UI.fc5, TRS(`al reset arrivi al ~${Math.min(100, Math.round(f.end))}%`, `at reset ~${Math.min(100, Math.round(f.end))}%`), C.MUTED);
+    else setText(UI.fc5, f.k === FC_STABLE ? TRS('uso stabile', 'stable usage') : '', C.MUTED);
+  }
+  if (curPage() === PG.SESS) sessRedraw();
+  if (UI.heatCap && !(P.heats || 0)) {                      // didascalia della pagina ritmo a rotazione
+    const ph = Math.floor(realMs() / 6000) % 2;
+    if (ph !== G.heatPh) { G.heatPh = ph; heatRedraw(); }
+  }
   paceUpdate();
   setHdrStatus();
 }
@@ -1781,6 +1907,15 @@ function momentTick() {
 // ============================================================
 const NT_CLAUDE = 1, NT_TIMER = 2;
 let NT = null;
+// avviso settimana: la quota finisce prima del reset (demo; sul dispositivo lo decide wk_tick)
+function wkShow() {
+  const re = G.usage.d7Reset || nowEpoch() + 4 * 86400, eta = re - 44 * 3600;
+  const early = re - eta, e = early >= 86400 ? TRS(`${Math.floor(early / 86400)}g ${Math.floor(early % 86400 / 3600)}h`, `${Math.floor(early / 86400)}d ${Math.floor(early % 86400 / 3600)}h`) : `${Math.floor(early / 3600)}h`;
+  noticeShow({ kind: 5, col: C.WARN, hop: false, ask: true, maxMs: 600000, legend: TRS('settimana', 'week'),
+    top: TRS('quota settimanale al', 'weekly quota at'), big: Math.round(Math.max(85, G.usage.d7)), unit: '%',
+    msg: TRS(`a questo ritmo finisce ${fmtClock(eta).toLowerCase()}, ${e} prima del reset`, `at this pace it runs out ${fmtClock(eta).toLowerCase()}, ${e} before reset`),
+    foot: TRS(`reset ${fmtClock(re).toLowerCase()}`, `reset ${fmtClock(re).toLowerCase()}`) });
+}
 function noticeClose() { if (NT) { NT.scrim.remove(); NT = null; } }
 function noticeShow(n, t0) {
   noticeClose();
@@ -1797,7 +1932,7 @@ function noticeShow(n, t0) {
   if (n.big >= 0) { const b = label(s, `${n.big}<small>${n.unit}</small>`, 54, n.col, 232, 68); b.classList.add('pctl'); }
   else label(s, n.word, 22, n.col, 234, 92);
   const m = label(s, `${GT} ${n.msg}`, 14, C.TEXT, 234, 140); m.classList.add('wrap'); m.style.width = '222px';
-  if (n.foot) label(s, n.foot, 12, C.MUTED, 234, 220);
+  if (n.foot) { const f = label(s, n.foot, 12, C.MUTED, 234, 220); f.classList.add('wrap'); f.style.width = '222px'; }
   label(s, TRS('[ tocca per chiudere ]', '[ tap to close ]'), 11, C.FAINT, 292, 284);
   noticeTick();
 }
@@ -1822,6 +1957,12 @@ function ccEvent(ev, proj, dur) {
   if (!P.ccal) return;
   if (ev === 'done' && dur >= 0 && dur < CC_MIN_S[P.ccal]) { slog(`[CLAUDE] fine lavoro dopo ${dur} s: sotto la soglia, nessun avviso`); return; }
   G.cc = { ev, proj, dur };
+  if (state === ST.MAIN && curPage() === PG.SESS && !SHADE) {        // gia' sulle sessioni: lampeggia il riquadro
+    const i = SESS.findIndex((x) => x.p === proj);
+    if (i >= 0) { SESS[i].s = ev === 'done' ? 3 : 2; ssBlink(i); }
+    slog(`[CLAUDE] ${ev} ${proj}: lampeggio sulla pagina sessioni (niente schermo intero)`);
+    return;
+  }
   if (G.ntPend !== NT_TIMER) { G.ntPend = NT_CLAUDE; G.ntT0 = 0; }
 }
 function ccShow(t0) {
@@ -1932,7 +2073,7 @@ function uniqueLabel(lbl, slot) {
   return lbl;
 }
 // impostazioni a gruppi (come sul dispositivo): pagina principale con le voci, una pagina per gruppo
-const SG_TITLES = [['impostazioni', 'settings'], ['claude', 'claude'], ['avvisi', 'alerts'], ['schermo', 'screen'], ['rete e pc', 'network and pc'], ['sistema', 'system']];
+const SG_TITLES = [['impostazioni', 'settings'], ['claude', 'claude'], ['avvisi', 'alerts'], ['schermo', 'screen'], ['rete e pc', 'network and pc'], ['sistema', 'system'], ['ordine pagine', 'page order']];
 function uiSettings() {
   G.wipeArmed = false;
   const g = G.setGroup || 0;
@@ -1941,7 +2082,7 @@ function uiSettings() {
   if (g === 0) thead(gt(0), G.usage.ok ? ST.MAIN : ST.SETTINGS);
   else {
     thead(`${gt(0)} / ${gt(g)}`, null);
-    const bk = tbtn(scr, `← ${TRS('indietro', 'back')}`, 89, 32, () => goGroup(0), { color: C.MUTED });
+    const bk = tbtn(scr, `← ${TRS('indietro', 'back')}`, 89, 32, () => goGroup(g === 6 ? 3 : 0), { color: C.MUTED });
     bk.style.left = '378px'; bk.style.top = '5px';
   }
   if (G.setGroupShown !== g) G.setScroll = 0;
@@ -1974,6 +2115,8 @@ function uiSettings() {
     kvRow(lst, TRS('avviso calendario', 'calendar alert'), (P.calal ?? 1) ? TRS(`${[0, 5, 10, 15][P.calal ?? 1]} min prima`, `${[0, 5, 10, 15][P.calal ?? 1]} min before`) : TRS('spento', 'off'), () => { P.calal = ((P.calal ?? 1) + 1) % 4; requestState(ST.SETTINGS); });
     kvRow(lst, TRS('claude durante il focus', 'claude during focus'), P.ccfocus ? TRS('alla pausa', 'at the break') : TRS('subito', 'right away'), () => { P.ccfocus = !P.ccfocus; requestState(ST.SETTINGS); });
     kvRow(lst, TRS('suoni sul pc', 'sounds on pc'), P.pcsnd ? TRS('acceso', 'on') : TRS('spento', 'off'), () => { P.pcsnd = !P.pcsnd; requestState(ST.SETTINGS); });
+    kvRow(lst, TRS('avviso settimana', 'week alert'), P.wkal ? TRS(`oltre ${[0, 70, 85, 95][P.wkal]}%`, `above ${[0, 70, 85, 95][P.wkal]}%`) : TRS('spento', 'off'),
+      () => { P.wkal = (P.wkal + 1) % 4; requestState(ST.SETTINGS); });
     kvRow(lst, TRS('avviso reset', 'reset alert'), P.rstal ? TRS('sopra 80%', 'above 80%') : TRS('spento', 'off'), () => { P.rstal = !P.rstal; requestState(ST.SETTINGS); });
   } else if (g === 3) {
     kvRow(lst, TRS("luminosita'", 'brightness'), briN(), (v) => { P.bri = (P.bri + 1) % 3; applyBrightness(); setText(v, briN()); });
@@ -1988,17 +2131,32 @@ function uiSettings() {
     kvRow(lst, TRS('attenua dopo', 'dim after'), P.dim ? `${DIM_MIN[P.dim]} min` : TRS('spento', 'off'), () => { P.dim = (P.dim + 1) % 4; requestState(ST.SETTINGS); });
     kvRow(lst, TRS('home dopo', 'home after'), P.clock ? `${CLOCK_MIN[P.clock]} min` : TRS('spento', 'off'), () => { P.clock = (P.clock + 1) % 4; requestState(ST.SETTINGS); });
     kvRow(lst, 'slideshow', slideVal(), (v) => { P.slide = SL[(SL.indexOf(P.slide) + 1) % SL.length]; setText(v, slideVal()); });
+    sub(6, `${pageName(pageOrder()[1])}, ${pageName(pageOrder()[2])}...`);
+  } else if (g === 6) {                                        // ordine pagine: tocca per salire di un posto
+    label(lst, TRS('tocca una pagina per spostarla su (la prima va in fondo)', 'tap a page to move it up (the first goes last)'), 11, C.MUTED).style.position = 'static';
+    pageOrder().forEach((pg, i) => {
+      if (!i) { kvRow(lst, `1. ${pageName(pg)}`, TRS('fissa', 'fixed'), null, { color: C.MUTED, valColor: C.FAINT }); return; }
+      kvRow(lst, `${i + 1}. ${pageName(pg)}`, '↑', () => {
+        const o = [...pageOrder()];
+        if (i === 1) o.push(o.splice(1, 1)[0]); else [o[i - 1], o[i]] = [o[i], o[i - 1]];
+        P.porder = o; G.curTile = 0; requestState(ST.SETTINGS);
+      });
+    });
+    kvRow(lst, TRS("ripristina l'ordine", 'reset the order'), '↵', () => { P.porder = null; G.curTile = 0; requestState(ST.SETTINGS); });
   } else if (g === 4) {
     kvRow(lst, 'wifi', escapeHtml(G.wifiConnected ? G.ssid : '--'), () => { G.onboarding = false; requestState(ST.WIFI); });
     kvRow(lst, TRS('rete locale', 'local network'), G.wifiConnected ? `http://${DEVICE_IP}` : TRS('non connesso', 'not connected'), null);
     kvRow(lst, TRS('nome in rete', 'network name'), 'ritmo-code.local', null, { color: C.MUTED, valColor: C.MUTED });
     const PCI = [1, 3, 5, 60];
     kvRow(lst, TRS('intervallo pc', 'pc interval'), PCI[P.pcint || 0] >= 60 ? '1min' : `${PCI[P.pcint || 0]}s`, () => { P.pcint = ((P.pcint || 0) + 1) % 4; requestState(ST.SETTINGS); });
+    kvRow(lst, TRS('sessioni: cerca la scheda', 'sessions: find the tab'), P.sstab !== false ? TRS('sì (warp)', 'yes (warp)') : 'no', () => { P.sstab = P.sstab === false; requestState(ST.SETTINGS); });
   } else {
     kvRow(lst, TRS('lingua', 'language'), TRS('italiano', 'english'), () => { P.lang ^= 1; requestState(ST.SETTINGS); });
     kvRow(lst, TRS('fuso orario', 'timezone'), tzVal(), (v) => { const i = TZ_OPTS.indexOf(P.tz); P.tz = TZ_OPTS[(i + 1) % TZ_OPTS.length]; setText(v, tzVal()); });
     kvRow(lst, TRS('aggiornamenti', 'updates'), TRS('aggiornato', 'up to date'), () => slog('[SIM] sul dispositivo: controlla su GitHub e installa con un tocco'));
     kvRow(lst, TRS('aggiorna da browser', 'update from browser'), 'wifi', () => slog('[SIM] aggiornamento dal browser: sul dispositivo'));
+    kvRow(lst, TRS('spazio libero', 'free space'), TRS('820 KB liberi di 1408', '820 KB free of 1408'), null, { valColor: C.MUTED });   // esempio
+    kvRow(lst, TRS('ram libera', 'free ram'), '74 KB (min 21)', null, { valColor: C.MUTED });
     kvRow(lst, 'info', `v${CFG.FW}`, () => requestState(ST.ABOUT));
     kvRow(lst, TRS('contatore fps', 'fps counter'), P.perf ? TRS('acceso', 'on') : TRS('spento', 'off'), (v) => { P.perf = !P.perf; setText(v, P.perf ? TRS('acceso', 'on') : TRS('spento', 'off')); });
     kvRow(lst, TRS('cancella tutto', 'erase everything'), '', (v) => {
@@ -2199,7 +2357,7 @@ function clearScreen() {
   momentClose(); PMENU = null; NC = null;
   // l'avviso a schermo intero sopravvive ai rebuild del dashboard (stesso inizio)
   if (NT) { if (pending === ST.MAIN) { G.ntPend = NT.kind; G.ntT0 = NT.t0; } noticeClose(); }
-  tmMenuClose(); wxWeekClose(); shadeClose(); calViewClose();
+  tmMenuClose(); wxWeekClose(); pjViewClose(); shadeClose(); calViewClose();
   scr.innerHTML = '';
   UI = {}; hdrStatus = null; pinDots = pinMsg = tokMsg = null; activeTA = null;
 }
@@ -2427,7 +2585,7 @@ function initPanel() {
 }
 
 // accesso per tools/capture_screens.js (immagini del README)
-window.__sim = { API, G, ST, P, boot, requestState, setTile, refreshUiValues, dashTick, showMoment, momentClose, ccEvent, ccBusySet, calViewOpen, CAL, CAL_ALL, calShow, mediaViewOpen, cdViewOpen, MEDIA, CDS, pauseSet, uiSettings, shadeOpen, shadeClose, alPush, noticeClose, tmMenuOpen, wxWeekOpen, tmStart, TM, TM_TIMER, TM_FOCUS, TM_BREAK, pauseMenuOpen, pauseMenuClose, nightClockShow, nightClockClose };
+window.__sim = { API, G, ST, P, boot, requestState, setTile, refreshUiValues, dashTick, showMoment, momentClose, ccEvent, ccBusySet, calViewOpen, CAL, CAL_ALL, calShow, mediaViewOpen, cdViewOpen, MEDIA, CDS, pauseSet, uiSettings, shadeOpen, shadeClose, alPush, noticeClose, tmMenuOpen, wxWeekOpen, pjViewOpen, pjViewClose, wkShow, ssBlink, tileOf, PG, tmStart, TM, TM_TIMER, TM_FOCUS, TM_BREAK, pauseMenuOpen, pauseMenuClose, nightClockShow, nightClockClose };
 initPanel();
 applyBrightness();
 boot(true);

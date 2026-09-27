@@ -60,6 +60,7 @@ LV_FONT_DECLARE(font_jbm_150)
 #define U_LEFT    "\xE2\x86\x90"   // ←
 #define U_RIGHT   "\xE2\x86\x92"   // →
 #define U_ENTER   "\xE2\x86\xB5"   // ↵
+#define U_UP      "\xE2\x86\x91"   // ↑
 #define U_BKSP    "\xE2\x8C\xAB"   // ⌫
 #define U_BLOCK   "\xE2\x96\x88"   // █
 #define U_CURSOR  "\xE2\x96\x8C"   // ▌
@@ -131,7 +132,7 @@ struct ModelInfo {
 static ModelInfo g_models[NMODELS] = {
   {"Haiku",  "claude-haiku-4-5-20251001", "", {0, 0}, 0},
   {"Sonnet", "claude-sonnet-5",           "", {0, 0}, 0},
-  {"Opus",   "claude-opus-5",             "", {0, 0}, 0},
+  {"Opus",   "claude-opus-5-5",           "", {0, 0}, 0},
   {"Fable",  "claude-fable-5-1",          "", {0, 0}, 0},
 };
 static int g_probeIdx = 0;
@@ -211,7 +212,7 @@ static bool model_set_id(int i, const char *raw) {
   }
   if (strcmp(next, g_models[i].id) != 0) {
     strlcpy(g_models[i].id, next, MODEL_ID_MAX);
-    g_models[i].pr.code = 0; g_models[i].pr.ms = 0;   // "--" fino alla prossima sonda
+    g_models[i].pr.code = 0; g_models[i].pr.ms = 0; g_models[i].pr.msg[0] = 0;   // "--" fino alla prossima sonda
     g_models[i].atMs = 0;
     g_models[i].lhN = 0;
     Serial.printf("[MODEL] %s -> %s\n", g_models[i].name, g_models[i].id);
@@ -247,6 +248,9 @@ static bool g_timeInit = false;
 static bool g_wantRefresh = false;        // il pulsante di refresh ha chiesto un aggiornamento
 static bool g_refreshing = false;         // richiesta in corso
 static bool g_lastFetchOk = true;         // l'ultimo fetch e' andato a buon fine?
+static char g_lastErr[64] = "";           // errore dell'ultimo fetch fallito (pannello web, /api/status)
+static uint32_t g_lastErrAt = 0;          // epoch dell'errore
+static int g_failN = 0;                   // fetch falliti di fila
 static uint32_t g_lastOkMs = 0;           // millis dell'ultimo successo (per "aggiornato Xs fa")
 static lv_obj_t *g_hdrStatus = nullptr;   // testo di stato nell'intestazione del dashboard
 
@@ -265,6 +269,11 @@ static int g_autoBri = 0;
 // promemoria pausa (NVS "brk"): dopo N minuti di PC in uso senza staccare (dal PC Monitor)
 static int g_brkIdx = 0;
 static const uint8_t BRK_MIN[4] = {0, 45, 60, 90};
+// avviso settimana (NVS "wkal"): sopra la soglia, se a questo ritmo la quota finisce almeno
+// 12 ore prima del reset. Una volta per settimana ("wkald" = reset della settimana avvisata)
+static int g_wkAlIdx = 2;
+static const uint8_t WK_AL_THR[4] = {0, 70, 85, 95};
+static uint32_t g_wkAlDone = 0;
 // tasti della tendina (NVS "shbtn"): un bit per tasto, al massimo quattro
 enum { SHB_PAUSE = 0, SHB_TIMER, SHB_LIGHT, SHB_SOUND, SHB_REFRESH, SHB_CAL, SHB_WX, SHB_MEDIA, SHB_CD, SHB_N };
 static uint16_t g_shBtn = 0x0F;
@@ -282,6 +291,17 @@ static bool g_mcHave = false;
 static uint32_t g_mcId = 0, g_mcWant = 0, g_mcGot = 0, g_mcPosAtMs = 0;
 static volatile bool g_mcReq = false, g_mcDone = false, g_mcOk = false, g_mcActReq = false;
 static char g_mcHost[48], g_mcAct[10];
+static volatile bool g_ssReq = false;           // pagina sessioni: apri la sessione g_ssKey sul PC
+static char g_ssHost[48], g_ssKey[10];
+static bool g_ssTab = true;                     // cerca anche la scheda giusta in Warp (NVS "sstab")
+static char g_ssAskK[10] = "";                  // ultima sessione toccata (esito sotto il riquadro)
+// sulla pagina sessioni gli avvisi di Claude non aprono lo schermo intero: lampeggia il riquadro
+// della sessione che ha appena finito o che aspetta te (fino al tocco o per 60 s)
+static char g_ssBlinkK[6][10];
+static uint32_t g_ssBlinkMs[6];
+static char g_ssPrevK[6][10];
+static int g_ssPrevS[6];
+static uint32_t g_ssAskMs = 0;
 static int g_mcSec = 0;
 // ---- Conto alla rovescia verso una data (NVS "cd0".."cd2": "epoch|titolo"), dal dispositivo o dal browser ----
 struct CdItem { uint32_t at; char title[44]; };
@@ -399,7 +419,15 @@ static int g_mascN = 0;
 static lv_point_precise_t g_mXPts[NMODELS][4][2];   // occhi a X (mood 3)
 
 // ---- Puntatori UI del dashboard (azzerati a ogni build di ST_MAIN) ----
-#define NTILES 7
+#define NTILES 8
+// Pagine: l'ordine si sceglie in Impostazioni > schermo > ordine pagine (NVS "porder"); la home resta
+// la prima. g_pageOrder[tile] = pagina mostrata in quella posizione.
+enum { PG_HOME = 0, PG_ORA, PG_SESS, PG_MODELS, PG_5H, PG_RITMO, PG_WEEKS, PG_PC };
+static uint8_t g_pageOrder[NTILES] = {PG_HOME, PG_ORA, PG_SESS, PG_MODELS, PG_5H, PG_RITMO, PG_WEEKS, PG_PC};
+static int g_curTile = 0;
+static int cur_page() { return g_pageOrder[g_curTile < NTILES ? g_curTile : 0]; }
+static int tile_of(int pg) { for (int i = 0; i < NTILES; i++) if (g_pageOrder[i] == pg) return i; return 0; }
+static const char *page_name(int pg);
 #define NBLK 19                       // blocchi della barra di utilizzo
 struct DashUI {
   lv_obj_t *tv, *tile[NTILES], *tab[NTILES];
@@ -407,6 +435,8 @@ struct DashUI {
   lv_obj_t *hdrSpark, *hmClLegend;                // ✻ che gira e "claude · al lavoro" quando Claude lavora
   // ora
   lv_obj_t *agPct5, *agCd5, *agAt5, *agPct7, *agCd7, *agAt7;
+  lv_obj_t *agFc5;                                // previsione della 5h sotto il conto alla rovescia
+  lv_obj_t *ssBox[6], *ssLeg[6], *ssSt[6], *ssAge[6], *ssTi[6], *ssFt[6];   // pagina sessioni
   Blocks blk5, blk7;
   lv_obj_t *agWord, *agCursor, *agPace, *agPaceMark;
   // modelli
@@ -432,7 +462,6 @@ struct DashUI {
 };
 static DashUI g_ui;
 static lv_obj_t *g_pinDots = nullptr, *g_pinMsg = nullptr;
-static int g_curTile = 0;
 
 // punti delle linee del grafico di tendenza (devono restare validi)
 static lv_point_precise_t g_trPts[HIST_MAX];
@@ -926,8 +955,20 @@ static void load_persisted() {
   g_briIdx = g_prefs.getInt("bri", 1);
   g_autoBri = g_prefs.getInt("autobri", 0);
   if (g_autoBri < 0 || g_autoBri > 3) g_autoBri = 0;
+  g_ssTab = g_prefs.getBool("sstab", true);
+  {                                                  // ordine delle pagine: valido solo se e' una permutazione con la home prima
+    uint8_t o[NTILES];
+    if (g_prefs.getBytes("porder", o, NTILES) == NTILES && o[0] == PG_HOME) {
+      uint8_t seen = 0; bool ok = true;
+      for (int i = 0; i < NTILES; i++) { if (o[i] >= NTILES || (seen >> o[i]) & 1) ok = false; else seen |= 1 << o[i]; }
+      if (ok) memcpy(g_pageOrder, o, NTILES);
+    }
+  }
   g_brkIdx = g_prefs.getInt("brk", 0);
   if (g_brkIdx < 0 || g_brkIdx > 3) g_brkIdx = 0;
+  g_wkAlIdx = g_prefs.getInt("wkal", 2);
+  if (g_wkAlIdx < 0 || g_wkAlIdx > 3) g_wkAlIdx = 2;
+  g_wkAlDone = g_prefs.getUInt("wkald", 0);
   g_shBtn = (uint16_t)g_prefs.getUInt("shbtn", 0x0F);
   if (!g_shBtn || g_shBtn >= (1 << SHB_N)) g_shBtn = 0x0F;
   g_ccDay = g_prefs.getLong("ccd", 0);
@@ -1129,7 +1170,7 @@ static void factory_reset() {
   g_prefs.clear();              // cancella blob, pinatt, bri dal namespace claude
   for (int i = 0; i < NMODELS; i++) {         // gli ID personalizzati erano in NVS: torna ai predefiniti
     strlcpy(g_models[i].id, g_models[i].defId, MODEL_ID_MAX);
-    g_models[i].pr.code = 0; g_models[i].pr.ms = 0;
+    g_models[i].pr.code = 0; g_models[i].pr.ms = 0; g_models[i].pr.msg[0] = 0;
   }
   g_wifi.forgetAll();
   for (int i = 0; i < ACCT_MAX; i++) {
@@ -1646,6 +1687,7 @@ static const char *reset_reason_str() {
     default:                return "altro";
   }
 }
+static int h5_forecast(uint32_t *eta, float *endPct);
 static void handleApiStatus() {
   String o;
   o.reserve(9000);
@@ -1653,6 +1695,12 @@ static void handleApiStatus() {
   char b[160];
   uint32_t updated = (g_lastOkMs && now > 1000000000L) ? (uint32_t)(now - (millis() - g_lastOkMs) / 1000) : 0;
   o += "{\"reset\":\""; o += reset_reason_str(); o += "\",\"uptime\":"; o += (unsigned long)(millis() / 1000); o += ",";
+  // diagnostica: RAM interna in KB [libera, blocco piu' grande, minima dall'avvio] e ultimo errore di rete
+  snprintf(b, sizeof(b), "\"heap\":[%u,%u,%u],\"fails\":%d,\"err_at\":%u,\"err\":",
+           (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+           (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024),
+           (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024), g_failN, (unsigned)g_lastErrAt);
+  o += b; json_str(o, g_lastErr); o += ',';
   snprintf(b, sizeof(b), "\"fw\":\"" FW_VERSION "\",\"now\":%ld,\"ok\":%s,\"h5\":%.1f,\"d7\":%.1f,\"h5_reset\":%u,\"d7_reset\":%u,",
            (long)now, g_usage.ok ? "true" : "false", g_usage.h5, g_usage.d7,
            (unsigned)g_usage.h5ResetEpoch, (unsigned)g_usage.d7ResetEpoch);
@@ -1669,9 +1717,11 @@ static void handleApiStatus() {
     o += "{\"name\":"; json_str(o, g_models[i].name);
     o += ",\"id\":";   json_str(o, g_models[i].id);
     long age = g_models[i].atMs ? (long)((millis() - g_models[i].atMs) / 1000) : -1;
-    snprintf(b, sizeof(b), ",\"code\":%d,\"ms\":%u,\"up\":%s,\"mood\":%d,\"age\":%ld}",
+    snprintf(b, sizeof(b), ",\"code\":%d,\"ms\":%u,\"up\":%s,\"mood\":%d,\"age\":%ld,\"msg\":",
              g_models[i].pr.code, (unsigned)g_models[i].pr.ms, model_up(i) ? "true" : "false", model_mood(i), age);
     o += b;
+    json_str(o, g_models[i].pr.msg);
+    o += '}';
   }
   o += "],\"hist\":[";
   bool first = true;
@@ -1697,6 +1747,18 @@ static void handleApiStatus() {
   }
   snprintf(b, sizeof(b), "],\"pause_until\":%u,\"heat_mode\":%d,", (unsigned)g_pauseUntil, g_heatMode);
   o += b;
+  {                                                // previsione 5h: [tipo, fine, % al reset] (tipi di h5_forecast)
+    uint32_t eta = 0; float endPct = 0;
+    int fc = h5_forecast(&eta, &endPct);
+    snprintf(b, sizeof(b), "\"fc5\":[%d,%u,%.0f],", fc, (unsigned)eta, endPct);
+    o += b;
+  }
+  {                                                // progetti dal PC Monitor (pagina ritmo)
+    bool pcOk = g_pc.ok && g_pcAtMs && millis() - g_pcAtMs <= pc_stale_ms();
+    o += "\"cc_pl\":[";
+    for (int i = 0; i < 4; i++) { if (i) o += ','; json_str(o, pcOk ? g_pc.ccPl[i] : ""); }
+    o += "],\"cc_pa\":"; json_str(o, pcOk ? g_pc.ccPa : ""); o += ',';
+  }
   {                                                // timer e pomodoro (per il menu dell'icona sul PC)
     char tl[40] = "";
     if (g_tmMode) tm_label(tl, sizeof(tl));
@@ -2293,6 +2355,51 @@ static void hist_push(float h5, float d7) {
 }
 static int hist_idx(int i) { return (g_histHead - g_histN + i + HIST_MAX * 2) % HIST_MAX; }
 
+// Previsione della finestra 5h col ritmo degli ultimi 45 min (pagina 5h, pagina ora, home).
+// FC_NONE = orologio o storico insufficienti, FC_STABLE = non sale, FC_OUT = finisce prima
+// del reset (*eta), FC_REACH = arriva al reset con *endPct, FC_DONE = gia' esaurita.
+enum { FC_NONE = 0, FC_STABLE, FC_OUT, FC_REACH, FC_DONE };
+static int h5_forecast(uint32_t *eta, float *endPct) {
+  time_t now = time(nullptr);
+  uint32_t we = g_usage.h5ResetEpoch;
+  if (now < 1000000000L || !we || (uint32_t)now >= we || !g_usage.ok) return FC_NONE;
+  if (g_usage.h5 >= 99.5f) return FC_DONE;
+  uint32_t ws = we - 5 * 3600;
+  Sample first = {0, 0, 0};
+  for (int i = 0; i < g_histN; i++) {
+    Sample s = g_hist[hist_idx(i)];
+    if (s.t == 0 || s.t < ws) continue;
+    if (s.t >= (uint32_t)now - 2700) { first = s; break; }
+  }
+  if (first.t == 0 || (uint32_t)now <= first.t + 300) return FC_NONE;
+  float rate = (g_usage.h5 - first.h5) / (((uint32_t)now - first.t) / 60.0f);   // %/min
+  if (rate <= 0.02f) return FC_STABLE;
+  float minsLeft = (100.0f - g_usage.h5) / rate;
+  uint32_t etaT = (uint32_t)now + (uint32_t)(minsLeft * 60);
+  if (eta) *eta = etaT;
+  if (endPct) *endPct = g_usage.h5 + rate * ((we - (uint32_t)now) / 60.0f);
+  return etaT <= we ? FC_OUT : FC_REACH;
+}
+
+// Previsione della settimana: media dall'inizio della settimana proiettata fino al reset.
+// true se a questo ritmo finisce prima del reset (*eta), altrimenti *endPct al reset.
+static float week_elapsed();
+static bool week_forecast(float *used, uint32_t *eta, float *endPct) {
+  float f = week_elapsed();
+  if (f <= 0.02f || !g_usage.ok) return false;
+  time_t now = time(nullptr);
+  float u = g_usage.d7ResetEpoch <= (uint32_t)now ? 0.0f : g_usage.d7;   // settimana nuova
+  float hoursIn = f * 168.0f, hoursLeft = (1.0f - f) * 168.0f;
+  float rate = u / hoursIn;                                             // % per ora
+  if (used) *used = u;
+  if (endPct) *endPct = u + rate * hoursLeft;
+  if (rate > 0.0001f && (100.0f - u) / rate < hoursLeft) {
+    if (eta) *eta = (uint32_t)now + (uint32_t)((100.0f - u) / rate * 3600.0f);
+    return true;
+  }
+  return false;
+}
+
 // giorno locale (giorni dall'epoch, corretto per il fuso configurato)
 static uint32_t day_key() {
   time_t now = time(nullptr);
@@ -2793,7 +2900,7 @@ static void spark_text(int mi, char *out, size_t sz) {
 // ============================================================
 // Tile 0 — ORA: due riquadri (5h / settimana) + riga di prompt
 static void build_win_box(lv_obj_t *t, int x, const char *legend,
-                          lv_obj_t **pct, Blocks *blk, lv_obj_t **at, lv_obj_t **cd) {
+                          lv_obj_t **pct, Blocks *blk, lv_obj_t **at, lv_obj_t **cd, lv_obj_t **fc = nullptr) {
   // ritmo interno che scende per phi: 21 · 13 · 8, padding 21 sopra e 22 sotto
   lv_obj_t *b = tbox(t, x, 20, 223, 193, legend);
   lv_obj_t *r = trow(b, 13, 21);
@@ -2805,9 +2912,14 @@ static void build_win_box(lv_obj_t *t, int x, const char *legend,
   lv_obj_set_width(*at, 195);
   lv_obj_set_style_text_align(*at, LV_TEXT_ALIGN_RIGHT, 0);
   *cd = tlabel(b, F22, C_TEXT, 13, 141);
+  if (fc) {                                     // riga libera sotto il conto alla rovescia
+    *fc = tlabel(b, F12, C_MUTED, 13, 169);
+    lv_obj_set_width(*fc, 195);
+    lv_label_set_long_mode(*fc, LV_LABEL_LONG_CLIP);
+  }
 }
 static void build_tile_agora(lv_obj_t *t) {
-  build_win_box(t, 13,  TRS("finestra 5h", "5h window"), &g_ui.agPct5, &g_ui.blk5, &g_ui.agAt5, &g_ui.agCd5);
+  build_win_box(t, 13,  TRS("finestra 5h", "5h window"), &g_ui.agPct5, &g_ui.blk5, &g_ui.agAt5, &g_ui.agCd5, &g_ui.agFc5);
   build_win_box(t, 244, TRS("settimana", "week"),        &g_ui.agPct7, &g_ui.blk7, &g_ui.agAt7, &g_ui.agCd7);
   lv_obj_t *r = trow(t, 13, 226);
   mklabel(r, "> ", F14, C_ACCENT);
@@ -2849,19 +2961,19 @@ static void pace_update() {
   uint32_t col = diff <= 0 ? C_OK : (diff <= 15 ? C_WARN : C_BAD);
   // ogni 6 s alterna col "dove arrivi": media della settimana finora proiettata fino al reset
   if ((millis() / 6000) % 2 == 1 && f > 0.02f) {
-    float hoursIn = f * 168.0f, hoursLeft = (1.0f - f) * 168.0f;
-    float rate = used / hoursIn;                        // % per ora
+    uint32_t eta = 0; float endPct = 0;
+    bool out = week_forecast(nullptr, &eta, &endPct);
     if (used >= 99.5f) {
       snprintf(s, sizeof(s), "%s", TRS("quota settimanale esaurita", "weekly quota used up"));
       col = C_BAD;
-    } else if (rate > 0.0001f && (100.0f - used) / rate < hoursLeft) {
+    } else if (out) {
       char c[24];
-      fmt_clock((uint32_t)time(nullptr) + (uint32_t)((100.0f - used) / rate * 3600.0f), c, sizeof(c));
+      fmt_clock(eta, c, sizeof(c));
       for (char *q = c; *q; q++) if (*q >= 'A' && *q <= 'Z') *q += 32;
       snprintf(s, sizeof(s), TRS("a questo ritmo finisce %s", "at this pace ends %s"), c);
       col = C_BAD;
     } else {
-      int at = (int)lroundf(used + rate * hoursLeft);
+      int at = (int)lroundf(endPct);
       snprintf(s, sizeof(s), TRS("al reset arrivi al ~%d%%", "at reset you reach ~%d%%"), at > 100 ? 100 : at);
       col = at >= 90 ? C_WARN : C_OK;
     }
@@ -2993,6 +3105,94 @@ static void heat_btn_cb(lv_event_t *e) {
   heat_btn_style();
   heat_redraw();
 }
+// Pannello progetti (tocco sulla didascalia della pagina ritmo, scheda claude): elenco del
+// periodo dal PC Monitor con barra e percentuale; pallino verde = sessione al lavoro adesso
+static lv_obj_t *g_pjView = nullptr;
+static void pj_view_close() { if (g_pjView) { lv_obj_delete(g_pjView); g_pjView = nullptr; } }
+static void pj_view_close_cb(lv_event_t *e) { (void)e; pj_view_close(); }
+static void pj_view_open(lv_event_t *e);
+static void pj_period_cb(lv_event_t *e) {
+  int m = (int)(intptr_t)lv_event_get_user_data(e);
+  lv_event_stop_bubbling(e);                     // il tocco sul tasto non chiude il pannello
+  if (m != g_heatMode) {
+    g_heatMode = m;
+    g_prefs.putInt("heatm", m);
+    heat_btn_style();
+    heat_redraw();
+  }
+  pj_view_close();
+  pj_view_open(nullptr);
+}
+static bool pj_active(const char *name) {
+  const char *a = g_pc.ccPa;
+  size_t n = strlen(name);
+  while (*a) {
+    const char *end = strchr(a, ';');
+    size_t len = end ? (size_t)(end - a) : strlen(a);
+    if (len == n && !strncmp(a, name, n)) return true;
+    if (!end) break;
+    a = end + 1;
+  }
+  return false;
+}
+static void pj_view_open(lv_event_t *e) {
+  if (e && g_heatSrc != 0) return;               // scheda pomodoro: niente progetti
+  if (g_pjView) return;
+  lv_obj_t *s = plain_obj(lv_layer_top());
+  g_pjView = s;
+  lv_obj_set_size(s, 480, 320);
+  lv_obj_set_style_bg_color(s, lv_color_hex(C_BG), 0);
+  lv_obj_set_style_bg_opa(s, LV_OPA_COVER, 0);
+  lv_obj_add_flag(s, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(s, pj_view_close_cb, LV_EVENT_CLICKED, NULL);
+  tbox(s, 10, 14, 460, 296, TRS("progetti " U_MIDDOT " claude code", "projects " U_MIDDOT " claude code"), C_BORDER);
+  tstatic(s, TRS("stima dai log", "estimate from logs"), F12, C_MUTED, 30, 46);
+  const char *names[4] = {TRS("oggi", "today"), TRS("7g", "7d"), TRS("30g", "30d"), TRS("tutto", "all")};
+  for (int i = 0; i < 4; i++) {
+    bool on = i == g_heatMode;
+    lv_obj_t *b = tbtn(s, 190 + i * 66, 40, 60, 26, names[i], F12, on ? C_ACCENT : C_MUTED, on ? C_ACCENT : C_BORDER,
+                       pj_period_cb, (void *)(intptr_t)i);
+    if (on) {
+      lv_obj_set_style_bg_color(b, lv_color_mix(lv_color_hex(C_ACCENT), lv_color_hex(C_BG), 40), 0);
+      lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+    }
+  }
+  bool pcOk = g_pc.ok && g_pcAtMs && millis() - g_pcAtMs <= pc_stale_ms();
+  char list[sizeof(g_pc.ccPl[0])];
+  strlcpy(list, pcOk ? g_pc.ccPl[g_heatMode] : "", sizeof(list));
+  int row = 0;
+  char *save = nullptr;
+  for (char *it = strtok_r(list, ";", &save); it && row < 8; it = strtok_r(nullptr, ";", &save)) {
+    char *colon = strrchr(it, ':');
+    if (!colon) continue;
+    *colon = 0;
+    int pct = atoi(colon + 1);
+    if (pct < 0) pct = 0; if (pct > 100) pct = 100;
+    int y = 80 + row * 25;
+    bool act = pj_active(it);
+    if (act) rrect(s, 28, y + 5, 8, 8, 4, C_OK);
+    lv_obj_t *nm = tstatic(s, it, F14, act ? C_TEXT : (row ? C_MUTED : C_TEXT), 42, y);
+    lv_obj_set_width(nm, 150);
+    lv_label_set_long_mode(nm, LV_LABEL_LONG_DOT);
+    rrect(s, 200, y + 4, 190, 10, 2, C_TRACK);
+    int w = pct * 190 / 100;
+    if (pct > 0 && w < 2) w = 2;
+    if (w) rrect(s, 200, y + 4, w, 10, 2, row ? fade_hex(C_ACCENT, 150) : C_ACCENT);
+    char pb[8]; snprintf(pb, sizeof(pb), "%d%%", pct);
+    lv_obj_t *pl = tstatic(s, pb, F14, row ? C_MUTED : C_ACCENT, 398, y);
+    lv_obj_set_width(pl, 50);
+    lv_obj_set_style_text_align(pl, LV_TEXT_ALIGN_RIGHT, 0);
+    row++;
+  }
+  if (!row)
+    tstatic(s, pcOk ? TRS("nessun dato per questo periodo", "no data for this period")
+                    : TRS("serve il PC Monitor 1.9 collegato", "needs PC Monitor 1.9 connected"), F14, C_FAINT, 30, 90);
+  if (g_pc.ccPa[0] && pcOk) {
+    rrect(s, 30, 293, 8, 8, 4, C_OK);
+    tstatic(s, TRS("al lavoro adesso", "working now"), F12, C_MUTED, 44, 289);
+  }
+  tstatic(s, TRS("[ tocca per chiudere ]", "[ tap to close ]"), F12, C_FAINT, 290, 289);
+}
 static void build_tile_heat(lv_obj_t *t) {
   lv_obj_t *b = tbox(t, 13, 20, 454, 226, TRS("ritmo orario", "hourly rhythm"));
   g_ui.heatTab[0] = tbtn(b, 12, 12, 66, 26, "", F12, C_MUTED, C_BORDER, heat_tab_cb, (void *)(intptr_t)0);
@@ -3009,6 +3209,9 @@ static void build_tile_heat(lv_obj_t *t) {
     tstatic(b, s, F12, C_FAINT, 12 + ticks[i] * 18, HEAT_BASE + 4);
   }
   g_ui.heatCap = box_caption(b, TRS("quota 5h consumata per ora locale", "5h quota burned per local hour"));
+  lv_obj_add_flag(g_ui.heatCap, LV_OBJ_FLAG_CLICKABLE);          // -> pannello dei progetti
+  lv_obj_set_ext_click_area(g_ui.heatCap, 10);
+  lv_obj_add_event_cb(g_ui.heatCap, pj_view_open, LV_EVENT_SHORT_CLICKED, NULL);
   heat_redraw();
 }
 
@@ -3358,8 +3561,8 @@ static void cal_view_open(lv_event_t *e) {
 
 // home: tocca il riquadro claude o pc per andare alla pagina con i dettagli
 static void home_goto_cb(lv_event_t *e) {
-  int tile = (int)(intptr_t)lv_event_get_user_data(e);
-  if (g_ui.tv) lv_tileview_set_tile_by_index(g_ui.tv, tile, 0, LV_ANIM_ON);
+  int pg = (int)(intptr_t)lv_event_get_user_data(e);         // pagina, non posizione (l'ordine cambia)
+  if (g_ui.tv) lv_tileview_set_tile_by_index(g_ui.tv, tile_of(pg), 0, LV_ANIM_ON);
 }
 // Claude al lavoro: legenda del riquadro claude in home; la ✻ della testata gira nel loop
 static void cc_busy_ui() {
@@ -3451,7 +3654,7 @@ static void build_tile_home(lv_obj_t *t) {
   bool cdOn = g_ui.hmCdOn;
   lv_obj_t *b = tbox(t, 13, 115, cdOn ? 314 : 454, 74, "claude", C_BORDER, &g_ui.hmClLegend);
   lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);                       // -> pagina ora
-  lv_obj_add_event_cb(b, home_goto_cb, LV_EVENT_SHORT_CLICKED, (void *)(intptr_t)1);
+  lv_obj_add_event_cb(b, home_goto_cb, LV_EVENT_SHORT_CLICKED, (void *)(intptr_t)PG_ORA);
   const char *k[2] = {"5h", TRS("sett.", "week")};
   for (int i = 0; i < 2; i++) {
     int y = 13 + i * 30;
@@ -3482,7 +3685,7 @@ static void build_tile_home(lv_obj_t *t) {
   lv_obj_t *p = tbox(t, 13, 206, 314, 40, "pc", C_BORDER, &g_ui.hmPcLegend);   // a destra: pomodoro, timer, calendario
   home_icons(t);
   lv_obj_add_flag(p, LV_OBJ_FLAG_CLICKABLE);                       // -> pagina pc
-  lv_obj_add_event_cb(p, home_goto_cb, LV_EVENT_SHORT_CLICKED, (void *)(intptr_t)6);
+  lv_obj_add_event_cb(p, home_goto_cb, LV_EVENT_SHORT_CLICKED, (void *)(intptr_t)PG_PC);
   g_ui.hmPcRow = trow(p, 13, 9);
   const char *pk[3] = {"cpu ", "   ram ", "   gpu "};   // il disco e' nella pagina pc
   for (int i = 0; i < 3; i++) {
@@ -3582,12 +3785,19 @@ static void home_redraw() {
     label_set(g_ui.hmPct[i], g_usage.ok ? s : "--");
     label_color(g_ui.hmPct[i], col);
     char c[24];
-    if (i == 0) { fmt_hm(re[0], c, sizeof(c)); snprintf(s, sizeof(s), TRS("reset %s", "reset %s"), c); }
+    uint32_t infoCol = C_MUTED;
+    uint32_t eta = 0;
+    if (i == 0 && h5_forecast(&eta, nullptr) == FC_OUT) {       // finisce prima del reset: conta di piu'
+      fmt_hm(eta, c, sizeof(c)); snprintf(s, sizeof(s), TRS("finisce %s", "out %s"), c);
+      infoCol = (eta - (uint32_t)time(nullptr)) < 3600 ? C_BAD : C_WARN;
+    }
+    else if (i == 0) { fmt_hm(re[0], c, sizeof(c)); snprintf(s, sizeof(s), TRS("reset %s", "reset %s"), c); }
     else {
       fmt_eta(re[1], c, sizeof(c));
       snprintf(s, sizeof(s), TRS("reset tra %s", "reset in %s"), c);
     }
     label_set(g_ui.hmInfo[i], g_usage.ok ? s : "");
+    label_color(g_ui.hmInfo[i], infoCol);
   }
   uint32_t wc; const char *w = status_word(g_usage.statusOverall, &wc);
   snprintf(s, sizeof(s), TRS("stato %s", "status %s"), w);
@@ -3662,6 +3872,133 @@ static void build_tile_pc(lv_obj_t *t) {
   lv_obj_set_width(g_ui.pcDisks, 428);
   lv_label_set_long_mode(g_ui.pcDisks, LV_LABEL_LONG_DOT);
   pc_redraw();
+}
+// Tile 7 — SESSIONI: le sessioni di Claude Code aperte sul PC (dagli hook, PC Monitor 1.9),
+// 3 x 2 riquadri col colore dello stato; un tocco porta la sessione in primo piano sul PC
+static void sess_redraw();
+static const char *sess_word(int s) {
+  switch (s) {
+    case 1: return TRS("al lavoro", "working");
+    case 2: return TRS("aspetta te", "needs you");
+    case 3: return TRS("ha finito", "done");
+    default: return TRS("ferma", "idle");
+  }
+}
+static uint32_t sess_col(int s) { return s == 1 ? C_OK : s == 2 ? C_WARN : s == 3 ? C_ACCENT : C_MUTED; }
+static void sess_cb(lv_event_t *e) {
+  int i = (int)(intptr_t)lv_event_get_user_data(e);
+  bool pcOk = g_pc.ok && g_pcAtMs && millis() - g_pcAtMs <= pc_stale_ms();
+  if (!pcOk || i >= g_pc.ssN || !g_pcHost[0] || g_ssReq) return;
+  strlcpy(g_ssHost, g_pcHost, sizeof(g_ssHost));
+  strlcpy(g_ssKey, g_pc.ss[i].k, sizeof(g_ssKey));
+  strlcpy(g_ssAskK, g_pc.ss[i].k, sizeof(g_ssAskK));
+  g_ssAskMs = millis();
+  for (int j = 0; j < 6; j++) if (!strcmp(g_ssBlinkK[j], g_pc.ss[i].k)) g_ssBlinkK[j][0] = 0;   // vista: smette
+  g_ssReq = true;
+  pc_poll_in(1200);                                // rilegge l'esito subito dopo
+  sess_redraw();
+}
+static void build_tile_sess(lv_obj_t *t) {
+  for (int i = 0; i < 6; i++) {
+    int x = 13 + (i % 3) * 154, y = 20 + (i / 3) * 114;
+    lv_obj_t *b = tbox(t, x, y, 146, 106, " ", C_BORDER, &g_ui.ssLeg[i]);
+    g_ui.ssBox[i] = b;
+    lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_bg_color(b, lv_color_hex(C_SURFACE), LV_STATE_PRESSED);
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_STATE_PRESSED);
+    lv_obj_add_event_cb(b, sess_cb, LV_EVENT_SHORT_CLICKED, (void *)(intptr_t)i);
+    g_ui.ssSt[i] = tlabel(b, F14, C_MUTED, 11, 12);
+    g_ui.ssAge[i] = tlabel(b, F12, C_FAINT, 11, 14);
+    lv_obj_set_width(g_ui.ssAge[i], 122);
+    lv_obj_set_style_text_align(g_ui.ssAge[i], LV_TEXT_ALIGN_RIGHT, 0);
+    g_ui.ssTi[i] = tlabel(b, F12, C_MUTED, 11, 38);
+    lv_obj_set_size(g_ui.ssTi[i], 124, 34);
+    lv_label_set_long_mode(g_ui.ssTi[i], LV_LABEL_LONG_DOT);
+    g_ui.ssFt[i] = tlabel(b, F12, C_FAINT, 11, 78);
+    lv_obj_set_width(g_ui.ssFt[i], 124);
+    lv_label_set_long_mode(g_ui.ssFt[i], LV_LABEL_LONG_CLIP);
+  }
+  sess_redraw();
+}
+static void sess_redraw() {
+  if (!g_ui.ssBox[0]) return;
+  bool pcOk = g_pc.ok && g_pcAtMs && millis() - g_pcAtMs <= pc_stale_ms();
+  int n = pcOk ? g_pc.ssN : 0;
+  uint32_t since = pcOk ? (millis() - g_pcAtMs) / 1000 : 0;
+  // passaggi a "ha finito" / "aspetta te": quella sessione lampeggia
+  for (int i = 0; i < n; i++) {
+    const auto &ss = g_pc.ss[i];
+    int prev = -1;
+    for (int j = 0; j < 6; j++) if (!strcmp(g_ssPrevK[j], ss.k)) prev = g_ssPrevS[j];
+    if ((ss.s == 2 || ss.s == 3) && prev >= 0 && prev != ss.s) {
+      int slot = 0;
+      for (int j = 0; j < 6; j++) { if (!strcmp(g_ssBlinkK[j], ss.k)) { slot = j; break; } if (!g_ssBlinkK[j][0]) slot = j; }
+      strlcpy(g_ssBlinkK[slot], ss.k, sizeof(g_ssBlinkK[slot]));
+      g_ssBlinkMs[slot] = millis();
+    }
+    if (ss.s != 2 && ss.s != 3)                     // tornata al lavoro: niente lampeggio
+      for (int j = 0; j < 6; j++) if (!strcmp(g_ssBlinkK[j], ss.k)) g_ssBlinkK[j][0] = 0;
+  }
+  for (int j = 0; j < 6; j++) {
+    if (j < n) { strlcpy(g_ssPrevK[j], g_pc.ss[j].k, sizeof(g_ssPrevK[j])); g_ssPrevS[j] = g_pc.ss[j].s; }
+    else g_ssPrevK[j][0] = 0;
+  }
+  for (int i = 0; i < 6; i++) {
+    lv_obj_t *b = g_ui.ssBox[i];
+    if (i >= n) {                                   // riquadro vuoto (il primo spiega perche')
+      lv_obj_set_style_border_color(b, lv_color_hex(C_TRACK), 0);
+      label_set(g_ui.ssLeg[i], " ");
+      label_set(g_ui.ssSt[i], i ? "" : (!g_pcHost[0] ? TRS("nessun pc", "no pc") : !pcOk ? TRS("pc non collegato", "pc offline") : TRS("nessuna sessione", "no sessions")));
+      label_color(g_ui.ssSt[i], C_FAINT);
+      label_set(g_ui.ssAge[i], "");
+      label_set(g_ui.ssTi[i], i ? "" : TRS("servono gli hook del PC Monitor 1.9", "needs PC Monitor 1.9 hooks"));
+      label_set(g_ui.ssFt[i], "");
+      continue;
+    }
+    const auto &ss = g_pc.ss[i];
+    uint32_t col = sess_col(ss.s);
+    lv_obj_set_style_border_color(b, lv_color_hex(ss.s ? col : C_BORDER), 0);
+    label_set(g_ui.ssLeg[i], ss.p);
+    label_color(g_ui.ssLeg[i], ss.s ? col : C_MUTED);
+    label_set(g_ui.ssSt[i], sess_word(ss.s));
+    label_color(g_ui.ssSt[i], col);
+    char a[16]; uint32_t sec = (uint32_t)ss.a + since;
+    if (sec < 60) snprintf(a, sizeof(a), "%us", (unsigned)sec);
+    else if (sec < 3600) snprintf(a, sizeof(a), "%um", (unsigned)(sec / 60));
+    else snprintf(a, sizeof(a), "%uh%02u", (unsigned)(sec / 3600), (unsigned)(sec % 3600 / 60));
+    label_set(g_ui.ssAge[i], a);
+    label_set(g_ui.ssTi[i], ss.ti[0] ? ss.ti : TRS("(senza titolo)", "(untitled)"));
+    // esito dell'ultima apertura di questa sessione, per qualche secondo
+    const char *ft = ""; uint32_t fcol = C_FAINT;
+    bool asked = g_ssAskK[0] && !strcmp(g_ssAskK, ss.k) && millis() - g_ssAskMs < 12000;
+    if (asked && !strcmp(g_pc.ssFk, ss.k) && g_pc.ssFa < 12) {
+      if (!strcmp(g_pc.ssFr, "ok"))       { ft = TRS("\xE2\x9C\x93 aperta", "\xE2\x9C\x93 opened"); fcol = C_OK; }
+      else if (!strcmp(g_pc.ssFr, "win")) { ft = TRS("cambia scheda", "switch tab"); fcol = C_WARN; }
+      else                                { ft = TRS("finestra non trovata", "window not found"); fcol = C_BAD; }
+    } else if (asked) ft = TRS("apro...", "opening...");
+    label_set(g_ui.ssFt[i], ft);
+    label_color(g_ui.ssFt[i], fcol);
+  }
+}
+// lampeggio dei riquadri (dal loop, ogni 400 ms): sfondo del colore dello stato acceso/spento
+static void sess_blink_tick() {
+  static uint32_t last = 0;
+  static bool on = false;
+  if (!g_ui.ssBox[0] || millis() - last < 400) return;
+  last = millis();
+  on = !on;
+  bool pcOk = g_pc.ok && g_pcAtMs && millis() - g_pcAtMs <= pc_stale_ms();
+  for (int i = 0; i < 6; i++) {
+    bool blink = false;
+    if (pcOk && i < g_pc.ssN)
+      for (int j = 0; j < 6; j++)
+        if (g_ssBlinkK[j][0] && !strcmp(g_ssBlinkK[j], g_pc.ss[i].k)) {
+          if (millis() - g_ssBlinkMs[j] > 60000UL) g_ssBlinkK[j][0] = 0; else blink = true;
+        }
+    uint32_t col = pcOk && i < g_pc.ssN ? sess_col(g_pc.ss[i].s) : C_BG;
+    lv_obj_set_style_bg_color(g_ui.ssBox[i], lv_color_mix(lv_color_hex(col), lv_color_hex(C_BG), 60), 0);
+    lv_obj_set_style_bg_opa(g_ui.ssBox[i], blink && on ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+  }
 }
 static void fmt_rate(float bps, char *out, int sz) {
   if (bps >= 1048576.0f)  snprintf(out, sz, "%.1f MB/s", bps / 1048576.0f);
@@ -3843,22 +4180,31 @@ static void weeks_redraw() {
   label_set(g_ui.wkCap, c);
 }
 
-// intestazione: percorso della pagina corrente + account attivo
-static void hdr_identity() {
-  static const char *PATH[NTILES] = {"/home", "/usage", "/models", "/window", "/rhythm", "/weeks", "/pc"};
-  if (g_ui.hdrPath) label_set(g_ui.hdrPath, PATH[g_curTile < NTILES ? g_curTile : 0]);
+// intestazione: niente percorso della pagina (si sovrapponeva allo stato "aggiornato 2m fa");
+// la pagina corrente e' gia' evidenziata nelle schede in basso
+static void hdr_identity() {}
+static const char *page_name(int pg) {
+  switch (pg) {
+    case PG_HOME:   return "home";
+    case PG_ORA:    return TRS("ora", "now");
+    case PG_SESS:   return TRS("sessioni", "sessions");
+    case PG_MODELS: return TRS("modelli", "models");
+    case PG_5H:     return "5h";
+    case PG_RITMO:  return TRS("ritmo", "rhythm");
+    case PG_WEEKS:  return TRS("settimane", "weeks");
+    default:        return "pc";
+  }
 }
 static void on_tile_changed(lv_event_t *e) {
   (void)e;
   if (!g_ui.tv) return;
   lv_obj_t *act = lv_tileview_get_tile_active(g_ui.tv);
-  const char *names[NTILES] = {"home", TRS("ora", "now"), TRS("modelli", "models"), "5h", TRS("ritmo", "rhythm"), TRS("settimane", "weeks"), "pc"};
   for (int i = 0; i < NTILES; i++) {
     bool on = (g_ui.tile[i] == act);
     if (on) g_curTile = i;
     if (!g_ui.tab[i]) continue;
     char b[16];
-    if (on) snprintf(b, sizeof(b), "[%s]", names[i]); else snprintf(b, sizeof(b), "%s", names[i]);
+    if (on) snprintf(b, sizeof(b), "[%s]", page_name(g_pageOrder[i])); else snprintf(b, sizeof(b), "%s", page_name(g_pageOrder[i]));
     label_set(g_ui.tab[i], b);
     label_color(g_ui.tab[i], on ? C_TEXT : C_FAINT);
   }
@@ -3875,16 +4221,42 @@ static void tab_cb(lv_event_t *e) {
 // Contatori/orologi (1s) — separati dai valori del fetch.
 static void pace_update();
 static void reset_watch();
+static void heat_redraw();
+static void sess_redraw();
 static void dash_tick() {
   if (g_state != ST_MAIN || !g_ui.agCd5) return;
   reset_watch();
   pace_update();
+  if (cur_page() == PG_SESS) sess_redraw();            // tempi delle sessioni
+  if (g_ui.heatCap && g_heatSrc == 0) {                  // didascalia della pagina ritmo a rotazione
+    static int ph = -1;
+    int p = (int)((millis() / 6000) % 2);
+    if (p != ph) { ph = p; heat_redraw(); }
+  }
   char e[32], c[24];
   fmt_eta(g_usage.h5ResetEpoch, e, sizeof(e));
   label_set(g_ui.agCd5, e);
   fmt_clock(g_usage.h5ResetEpoch, c, sizeof(c));
   for (char *q = c; *q; q++) if (*q >= 'A' && *q <= 'Z') *q += 32;
   label_set(g_ui.agAt5, c);
+  if (g_ui.agFc5) {
+    uint32_t eta = 0; float endPct = 0;
+    int fc = h5_forecast(&eta, &endPct);
+    char f[40] = "";
+    uint32_t fcol = C_MUTED;
+    if (fc == FC_OUT) {
+      char hm[12]; fmt_hm(eta, hm, sizeof(hm));
+      snprintf(f, sizeof(f), TRS("a questo ritmo: fine %s", "at this pace: out %s"), hm);
+      fcol = (eta - (uint32_t)time(nullptr)) < 3600 ? C_BAD : C_WARN;
+    } else if (fc == FC_REACH) {
+      int at = (int)lroundf(endPct);
+      snprintf(f, sizeof(f), TRS("al reset arrivi al ~%d%%", "at reset ~%d%%"), at > 100 ? 100 : at);
+    } else if (fc == FC_STABLE) {
+      strlcpy(f, TRS("uso stabile", "stable usage"), sizeof(f));
+    }
+    label_set(g_ui.agFc5, f);
+    label_color(g_ui.agFc5, fcol);
+  }
 
   fmt_eta(g_usage.d7ResetEpoch, e, sizeof(e));
   label_set(g_ui.agCd7, e);
@@ -3946,31 +4318,18 @@ static void trend_redraw() {
     return;
   }
 
-  float rate = 0;                    // %/min negli ultimi 45 min
-  {
-    Sample first = {0, 0, 0};
-    for (int i = 0; i < g_histN; i++) {
-      Sample s = g_hist[hist_idx(i)];
-      if (s.t == 0 || s.t < ws) continue;
-      if (s.t >= (uint32_t)now - 2700) { first = s; break; }
-    }
-    if (first.t != 0 && (uint32_t)now > first.t + 300) {
-      float dt = ((uint32_t)now - first.t) / 60.0f;
-      rate = (g_usage.h5 - first.h5) / dt;
-    }
-  }
-
+  uint32_t etaT = 0; float endPct = 0;
+  int fc = h5_forecast(&etaT, &endPct);
   char e[32];
-  if (g_usage.h5 >= 99.5f) {
+  if (fc == FC_DONE) {
     lv_line_set_points(g_ui.trProj, g_trProjPts, 0);
     fmt_eta(we, e, sizeof(e));
     snprintf(b, sizeof(b), TRS("finestra esaurita " U_MIDDOT " reset tra %s", "window exhausted " U_MIDDOT " resets in %s"), e);
     trend_cap(b, C_BAD);
-  } else if (rate > 0.02f) {
-    float minsLeft = (100.0f - g_usage.h5) / rate;
-    uint32_t etaT = (uint32_t)now + (uint32_t)(minsLeft * 60);
+  } else if (fc == FC_OUT || fc == FC_REACH) {
+    float minsLeft = (etaT - (uint32_t)now) / 60.0f;
     g_trProjPts[0].x = cx; g_trProjPts[0].y = cy;
-    if (etaT <= we) {
+    if (fc == FC_OUT) {
       g_trProjPts[1].x = tr_x(etaT, ws, we);
       g_trProjPts[1].y = tr_y(100);
       char hm[12]; fmt_hm(etaT, hm, sizeof(hm));
@@ -3978,7 +4337,6 @@ static void trend_redraw() {
                hm, (int)minsLeft / 60, (int)minsLeft % 60);
       trend_cap(b, minsLeft < 60 ? C_BAD : C_WARN);
     } else {
-      float endPct = g_usage.h5 + rate * ((we - (uint32_t)now) / 60.0f);
       g_trProjPts[1].x = tr_x(we, ws, we);
       g_trProjPts[1].y = tr_y(endPct);
       snprintf(b, sizeof(b), TRS("a questo ritmo NON finisce prima del reset (~%d%%)", "at this pace it does NOT run out before reset (~%d%%)"),
@@ -4008,7 +4366,13 @@ static void heat_redraw() {
       label_set(g_ui.heatCap, c);
     } else {
       cc_stat_roll();
-      if (g_heatMode == 0 && g_ccN) {
+      // ogni 6 s alterna con i progetti del periodo (dal PC Monitor)
+      bool pcOk = g_pc.ok && g_pcAtMs && millis() - g_pcAtMs <= pc_stale_ms();
+      if (pcOk && g_pc.ccPj[g_heatMode][0] && (millis() / 6000) % 2 == 1) {
+        char c[96];
+        snprintf(c, sizeof(c), TRS("progetti: %s", "projects: %s"), g_pc.ccPj[g_heatMode]);
+        label_set(g_ui.heatCap, c);
+      } else if (g_heatMode == 0 && g_ccN) {
         char c[96], t[12], x[12];
         dur_short(g_ccT, t, sizeof(t)); dur_short(g_ccX, x, sizeof(x));
         snprintf(c, sizeof(c), TRS("quota 5h per ora " U_MIDDOT " oggi %d richieste, %s (max %s)",
@@ -4245,7 +4609,7 @@ static void moment_tick() {
 // Avviso a schermo intero con Clawd: Claude Code, timer e pomodoro.
 // Resta finche' non lo tocchi (o scade), sopravvive ai rebuild del dashboard.
 // ============================================================
-enum { NT_NONE = 0, NT_CLAUDE, NT_TIMER, NT_CAL, NT_BRK, NT_CD };
+enum { NT_NONE = 0, NT_CLAUDE, NT_TIMER, NT_CAL, NT_BRK, NT_CD, NT_WK };
 struct NoticeUI { lv_obj_t *scrim, *box, *frame, *ask; uint32_t t0, col, maxMs; int kind; bool hop, idle; };
 static NoticeUI g_nt = {};
 static int g_ntPend = NT_NONE;                 // avviso da mostrare appena si puo'
@@ -4351,7 +4715,11 @@ static void notice_show(const NoticeText &n) {
   lv_obj_t *m = tstatic(s, n.msg, F14, C_TEXT, 252, 138);
   lv_obj_set_width(m, 204);
   lv_label_set_long_mode(m, LV_LABEL_LONG_WRAP);
-  if (n.foot[0]) tstatic(s, n.foot, F12, C_MUTED, 234, 222);
+  if (n.foot[0]) {                             // a capo dentro la cornice (finiva oltre il bordo)
+    lv_obj_t *f = tstatic(s, n.foot, F12, C_MUTED, 234, 222);
+    lv_obj_set_width(f, 222);
+    lv_label_set_long_mode(f, LV_LABEL_LONG_WRAP);
+  }
   tstatic(s, TRS("[ tocca per chiudere ]", "[ tap to close ]"), F12, C_FAINT, 290, 280);
 }
 
@@ -4408,6 +4776,12 @@ static void cc_event(long id, const char *ev, const char *proj, int dur, int age
   if (g_ccFocusDefer && g_tmMode == TM_FOCUS) {    // focus: lo mostra alla pausa (o quando fermi il pomodoro)
     g_ccDeferred = true;
     Serial.println("[CLAUDE] rimandato alla pausa");
+    return;
+  }
+  if (g_state == ST_MAIN && cur_page() == PG_SESS && !g_shade) {    // gia' sulle sessioni: solo lampeggio
+    char t[48]; snprintf(t, sizeof(t), "claude code " U_MIDDOT " %s", proj);
+    pc_notify(ev, t, !strcmp(ev, "done") ? TRS("ha finito", "is done") : TRS("ti aspetta", "needs you"));   // il suono resta
+    pc_poll_in(300);                                 // stato delle sessioni aggiornato subito: parte il lampeggio
     return;
   }
   if (g_ntPend != NT_TIMER) { g_ntPend = NT_CLAUDE; g_ntT0 = 0; }
@@ -4503,6 +4877,42 @@ static void brk_tick() {
 }
 
 // ---- Timer e pomodoro (tocca l'ora nella home) ----
+// ---- Avviso settimana: la quota finisce prima del reset (vedi g_wkAlIdx) ----
+static float g_wkAlUsed = 0;
+static uint32_t g_wkAlEta = 0;
+static void wk_show() {
+  NoticeText n = {};
+  n.kind = NT_WK; n.col = C_WARN; n.hop = false; n.ask = true; n.maxMs = 10UL * 60UL * 1000UL;
+  strcpy(n.ev, "thr");
+  strlcpy(n.legend, TRS("settimana", "week"), sizeof(n.legend));
+  strlcpy(n.top, TRS("quota settimanale al", "weekly quota at"), sizeof(n.top));
+  n.big = (int)lroundf(g_wkAlUsed); strcpy(n.unit, "%");
+  char c[24]; fmt_clock(g_wkAlEta, c, sizeof(c));
+  for (char *q = c; *q; q++) if (*q >= 'A' && *q <= 'Z') *q += 32;
+  uint32_t early = g_usage.d7ResetEpoch > g_wkAlEta ? g_usage.d7ResetEpoch - g_wkAlEta : 0;
+  char e[16];
+  if (early >= 86400) snprintf(e, sizeof(e), TRS("%ug %uh", "%ud %uh"), (unsigned)(early / 86400), (unsigned)(early % 86400 / 3600));
+  else                snprintf(e, sizeof(e), "%uh", (unsigned)(early / 3600));
+  snprintf(n.msg, sizeof(n.msg), TRS("a questo ritmo finisce %s, %s prima del reset", "at this pace it runs out %s, %s before reset"), c, e);
+  char r[24]; fmt_clock(g_usage.d7ResetEpoch, r, sizeof(r));
+  for (char *q = r; *q; q++) if (*q >= 'A' && *q <= 'Z') *q += 32;
+  snprintf(n.foot, sizeof(n.foot), TRS("reset %s", "reset %s"), r);
+  notice_show(n);
+}
+static void wk_tick() {
+  if (!g_wkAlIdx || !g_usage.ok || !g_usage.d7ResetEpoch || g_wkAlDone == g_usage.d7ResetEpoch) return;
+  float used = 0; uint32_t eta = 0;
+  if (!week_forecast(&used, &eta, nullptr)) return;
+  if (used < WK_AL_THR[g_wkAlIdx] || used >= 99.5f) return;
+  if (eta + 12UL * 3600UL > g_usage.d7ResetEpoch) return;          // finisce a ridosso del reset: niente avviso
+  if (night_active() || g_ntPend || g_nt.scrim) return;            // riprova al secondo dopo
+  g_wkAlUsed = used; g_wkAlEta = eta;
+  g_wkAlDone = g_usage.d7ResetEpoch;
+  g_prefs.putUInt("wkald", g_wkAlDone);
+  g_ntPend = NT_WK; g_ntT0 = 0;
+  Serial.printf("[SETT] avviso: %.0f%%, finisce %u (reset %u)\n", used, (unsigned)eta, (unsigned)g_usage.d7ResetEpoch);
+}
+
 // Pomodoro: 25 min di focus e 5 di pausa, pausa lunga di 15 dopo il quarto, poi si ferma.
 enum { TN_TIMER = 1, TN_BREAK, TN_FOCUS, TN_CYCLE };
 static int g_tmNotice = 0;                     // quale avviso di fine fase mostrare
@@ -5722,8 +6132,7 @@ static void ui_main() {
   lv_obj_set_ext_click_area(id, 8);
   lv_obj_add_event_cb(id, logo_cb, LV_EVENT_CLICKED, NULL);
   g_ui.hdrSpark = mklabel(id, U_SPARK " ", F14, C_ACCENT);
-  mklabel(id, "ritmo-code ", F14, C_TEXT);
-  g_ui.hdrPath = mklabel(id, "/usage", F14, C_FAINT);
+  mklabel(id, "ritmo-code", F14, C_TEXT);
   if (accountCount(g_accts) > 1) {
     char ab[ACCT_LBL_MAX + 3];
     snprintf(ab, sizeof(ab), " @%.10s", g_accts.label[g_accts.active]);
@@ -5768,13 +6177,19 @@ static void ui_main() {
     g_ui.tile[i] = lv_tileview_add_tile(g_ui.tv, i, 0, LV_DIR_HOR);
     tile_setup(g_ui.tile[i]);
   }
-  build_tile_home(g_ui.tile[0]);
-  build_tile_agora(g_ui.tile[1]);
-  build_tile_models(g_ui.tile[2]);
-  build_tile_trend(g_ui.tile[3]);
-  build_tile_heat(g_ui.tile[4]);
-  build_tile_weeks(g_ui.tile[5]);
-  build_tile_pc(g_ui.tile[6]);
+  for (int i = 0; i < NTILES; i++) {
+    lv_obj_t *t = g_ui.tile[i];
+    switch (g_pageOrder[i]) {
+      case PG_HOME:   build_tile_home(t); break;
+      case PG_ORA:    build_tile_agora(t); break;
+      case PG_SESS:   build_tile_sess(t); break;
+      case PG_MODELS: build_tile_models(t); break;
+      case PG_5H:     build_tile_trend(t); break;
+      case PG_RITMO:  build_tile_heat(t); break;
+      case PG_WEEKS:  build_tile_weeks(t); break;
+      case PG_PC:     build_tile_pc(t); break;
+    }
+  }
   lv_obj_add_event_cb(g_ui.tv, on_tile_changed, LV_EVENT_VALUE_CHANGED, NULL);
 
   // schede in basso, toccabili: [ora] modelli 5h ritmo
@@ -6008,6 +6423,36 @@ static void settings_action_cb(lv_event_t *e) {
         request_state(ST_SETTINGS);
       }
       break;
+    case 61: case 62: case 63: case 64: case 65: case 66: case 67: {   // ordine pagine: su di un posto
+      int i = act - 60;
+      if (i == 1) {                                    // la prima dopo la home va in fondo
+        uint8_t f = g_pageOrder[1];
+        memmove(&g_pageOrder[1], &g_pageOrder[2], NTILES - 2);
+        g_pageOrder[NTILES - 1] = f;
+      } else { uint8_t t = g_pageOrder[i]; g_pageOrder[i] = g_pageOrder[i - 1]; g_pageOrder[i - 1] = t; }
+      g_prefs.putBytes("porder", g_pageOrder, NTILES);
+      g_curTile = 0;
+      request_state(ST_SETTINGS);
+      break;
+    }
+    case 69: {                                         // ordine pagine: predefinito
+      static const uint8_t DEF[NTILES] = {PG_HOME, PG_ORA, PG_SESS, PG_MODELS, PG_5H, PG_RITMO, PG_WEEKS, PG_PC};
+      memcpy(g_pageOrder, DEF, NTILES);
+      g_prefs.remove("porder");
+      g_curTile = 0;
+      request_state(ST_SETTINGS);
+      break;
+    }
+    case 33:                                           // sessioni: scorre le schede di Warp fino a quella giusta
+      g_ssTab = !g_ssTab;
+      g_prefs.putBool("sstab", g_ssTab);
+      request_state(ST_SETTINGS);
+      break;
+    case 32:                                           // avviso settimana: 70 -> 85 -> 95% -> spento
+      g_wkAlIdx = (g_wkAlIdx + 1) % 4;
+      g_prefs.putInt("wkal", g_wkAlIdx);
+      request_state(ST_SETTINGS);
+      break;
     case 31:                                           // pagina media: si apre da sola quando parte la musica
       g_mediaAuto = !g_mediaAuto;
       g_prefs.putBool("mauto", g_mediaAuto);
@@ -6065,7 +6510,7 @@ static void settings_action_cb(lv_event_t *e) {
   }
 }
 // Impostazioni a gruppi: una pagina principale con le voci, e una pagina per gruppo
-enum { SG_MAIN = 0, SG_CLAUDE, SG_ALERTS, SG_SCREEN, SG_NET, SG_SYSTEM, SG_SHADE };
+enum { SG_MAIN = 0, SG_CLAUDE, SG_ALERTS, SG_SCREEN, SG_NET, SG_SYSTEM, SG_SHADE, SG_PAGES };
 static void open_settings_group(int g) { g_setGroup = g; g_setScroll = 0; request_state(ST_SETTINGS); }
 static void set_group_cb(lv_event_t *e) {
   g_setGroup = (int)(intptr_t)lv_event_get_user_data(e);
@@ -6079,8 +6524,8 @@ static void ui_settings() {
   static int lastGroup = -1;                       // cambiando gruppo si riparte dall'inizio della lista
   if (lastGroup != g_setGroup) g_setScroll = 0;
   lastGroup = g_setGroup;
-  static const char *GT_IT[7] = {"impostazioni", "claude", "avvisi", "schermo", "rete e pc", "sistema", "tendina"};
-  static const char *GT_EN[7] = {"settings", "claude", "alerts", "screen", "network and pc", "system", "pull-down"};
+  static const char *GT_IT[8] = {"impostazioni", "claude", "avvisi", "schermo", "rete e pc", "sistema", "tendina", "ordine pagine"};
+  static const char *GT_EN[8] = {"settings", "claude", "alerts", "screen", "network and pc", "system", "pull-down", "page order"};
   char title[40];
   if (g_setGroup == SG_MAIN) strcpy(title, g_lang ? GT_EN[0] : GT_IT[0]);
   else snprintf(title, sizeof(title), "%s / %s", g_lang ? GT_EN[0] : GT_IT[0], g_lang ? GT_EN[g_setGroup] : GT_IT[g_setGroup]);
@@ -6088,7 +6533,7 @@ static void ui_settings() {
   else {
     thead(scr, title, -1);
     tbtn(scr, 378, 5, 89, 32, TRS(U_LEFT " indietro", U_LEFT " back"), F14, C_MUTED, C_BORDER, set_group_cb,
-         (void *)(intptr_t)(g_setGroup == SG_SHADE ? SG_SCREEN : SG_MAIN));
+         (void *)(intptr_t)(g_setGroup == SG_SHADE || g_setGroup == SG_PAGES ? SG_SCREEN : SG_MAIN));
   }
   lv_obj_t *lst = tlist(scr, 13, 47, 454, 273);
   g_setList = lst;
@@ -6145,6 +6590,11 @@ static void ui_settings() {
       }
       kv_row(lst, TRS("suoni sul pc", "sounds on pc"), g_pcSound ? TRS("acceso", "on") : TRS("spento", "off"),
              C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)24);
+      {
+        char wk[24];
+        if (g_wkAlIdx) snprintf(wk, sizeof(wk), TRS("oltre %d%%", "above %d%%"), WK_AL_THR[g_wkAlIdx]); else strcpy(wk, TRS("spento", "off"));
+        kv_row(lst, TRS("avviso settimana", "week alert"), wk, C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)32);
+      }
       kv_row(lst, TRS("avviso reset", "reset alert"), g_resetAlert ? TRS("sopra 80%", "above 80%") : TRS("spento", "off"),
              C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)15);
       {
@@ -6152,6 +6602,19 @@ static void ui_settings() {
         if (g_brkIdx) snprintf(bk, sizeof(bk), TRS("dopo %d min", "after %d min"), BRK_MIN[g_brkIdx]); else strcpy(bk, TRS("spento", "off"));
         kv_row(lst, TRS("promemoria pausa", "break reminder"), bk, C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)30);
       }
+      break;
+    }
+    case SG_PAGES: {                                     // ordine delle pagine: tocca per salire di un posto
+      lv_obj_t *hr = plain_obj(lst);
+      lv_obj_set_size(hr, 454, 30);
+      tstatic(hr, TRS("tocca una pagina per spostarla su (la prima va in fondo)", "tap a page to move it up (the first goes last)"),
+              F12, C_MUTED, 13, 8);
+      for (int i = 0; i < NTILES; i++) {
+        char k[24]; snprintf(k, sizeof(k), "%d. %s", i + 1, page_name(g_pageOrder[i]));
+        if (i == 0) kv_row(lst, k, TRS("fissa", "fixed"), C_MUTED, C_FAINT, nullptr, nullptr);
+        else        kv_row(lst, k, U_UP, C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)(60 + i));
+      }
+      kv_row(lst, TRS("ripristina l'ordine", "reset the order"), U_ENTER, C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)69);
       break;
     }
     case SG_SHADE: {                                     // quali tasti nella tendina (al massimo quattro)
@@ -6177,6 +6640,10 @@ static void ui_settings() {
       {
         char tb[24]; snprintf(tb, sizeof(tb), TRS("%d tasti", "%d buttons"), shade_btn_count());
         sub(SG_SHADE, tb);
+      }
+      {
+        char po[40]; snprintf(po, sizeof(po), "%s, %s...", page_name(g_pageOrder[1]), page_name(g_pageOrder[2]));
+        sub(SG_PAGES, po);
       }
       kv_row(lst, TRS("media: apri da sola", "media: open by itself"), g_mediaAuto ? TRS("s\xC3\xAC", "yes") : "no",
              C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)31);
@@ -6214,6 +6681,8 @@ static void ui_settings() {
       char pci[12];
       if (PC_INT_S[g_pcIntIdx] >= 60) snprintf(pci, sizeof(pci), "%dmin", PC_INT_S[g_pcIntIdx] / 60); else snprintf(pci, sizeof(pci), "%ds", PC_INT_S[g_pcIntIdx]);
       kv_row(lst, TRS("intervallo pc", "pc interval"), pci, C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)20);
+      kv_row(lst, TRS("sessioni: cerca la scheda", "sessions: find the tab"), g_ssTab ? TRS("s\xC3\xAC (warp)", "yes (warp)") : "no",
+             C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)33);
       break;
     }
     case SG_SYSTEM: {
@@ -6234,6 +6703,16 @@ static void ui_settings() {
                settings_action_cb, (void *)(intptr_t)26);
       }
       kv_row(lst, TRS("aggiorna da browser", "update from browser"), "wifi", C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)14);
+      {                                                // spazio: file (storico, avvisi, account) e RAM
+        char sp[40];
+        size_t tot = LittleFS.totalBytes(), used = LittleFS.usedBytes();
+        snprintf(sp, sizeof(sp), TRS("%u KB liberi di %u", "%u KB free of %u"), (unsigned)((tot - used) / 1024), (unsigned)(tot / 1024));
+        kv_row(lst, TRS("spazio libero", "free space"), sp, C_TEXT, (tot - used) < tot / 10 ? C_WARN : C_MUTED, nullptr, nullptr);
+        snprintf(sp, sizeof(sp), TRS("%u KB (min %u)", "%u KB (min %u)"),
+                 (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+                 (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024));
+        kv_row(lst, TRS("ram libera", "free ram"), sp, C_TEXT, C_MUTED, nullptr, nullptr);
+      }
       kv_row(lst, "info", "v" FW_VERSION, C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)10);
       kv_row(lst, TRS("contatore fps", "fps counter"), g_perfOn ? TRS("acceso", "on") : TRS("spento", "off"),
              C_TEXT, C_ACCENT, settings_action_cb, (void *)(intptr_t)13);
@@ -6647,6 +7126,7 @@ static void render_state() {
   pause_menu_close();
   tm_menu_close();
   wx_week_close();
+  pj_view_close();
   cal_view_close();
   media_view_close();
   cd_edit_close();
@@ -6742,8 +7222,9 @@ static void net_task(void *) {
       g_net.probed = true;
     }
     memset(g_net.token, 0, sizeof(g_net.token));   // il token non resta nel job
-    Serial.printf("[NET] fine aggiornamento: RAM interna libera %u KB, minima dall'avvio %u KB\n",
+    Serial.printf("[NET] fine aggiornamento: RAM interna libera %u KB (blocco max %u KB), minima dall'avvio %u KB\n",
                   (unsigned)(heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024),
+                  (unsigned)(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL) / 1024),
                   (unsigned)(heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL) / 1024));
     g_net.durMs = millis() - t0;
     xSemaphoreGive(g_httpsLock);
@@ -6798,6 +7279,13 @@ static void extra_task(void *) {
       g_pcNtfReq = false;
       if (g_wifi.isConnected()) postPcNotify(n.host, n.ev, n.title, n.msg);
     }
+    if (g_ssReq) {
+      char h[48], k[10];
+      strlcpy(h, g_ssHost, sizeof(h)); strlcpy(k, g_ssKey, sizeof(k));
+      bool tab = g_ssTab;
+      g_ssReq = false;
+      if (g_wifi.isConnected()) postPcSession(h, k, tab);
+    }
     if (g_mcActReq) {
       char h[48], a[10];
       strlcpy(h, g_mcHost, sizeof(h)); strlcpy(a, g_mcAct, sizeof(a));
@@ -6815,9 +7303,13 @@ static void extra_task(void *) {
       g_mcDone = true;
     }
     if (g_pcReq) {
-      PcStats p = {};
-      if (g_wifi.isConnected()) fetchPcStats(g_pcReqHost, p);
-      g_pcRes = p;
+      static PcStats *p = nullptr;                    // nella PSRAM: fuori dallo stack e dalla RAM interna
+      if (!p) p = (PcStats *)heap_caps_calloc(1, sizeof(PcStats), MALLOC_CAP_SPIRAM);
+      if (p) {
+        memset(p, 0, sizeof(PcStats));
+        if (g_wifi.isConnected()) fetchPcStats(g_pcReqHost, *p);
+        g_pcRes = *p;
+      }
       g_pcReq = false;
       g_pcDone = true;
     }
@@ -6865,6 +7357,7 @@ static void net_apply() {
     g_usage = g_net.usage;
     g_lastOkMs = millis();
     g_lastFetchOk = true;
+    g_failN = 0;
     hist_push(g_usage.h5, g_usage.d7); accumulate_heat(g_usage.h5); week_record(g_usage.d7, g_usage.d7ResetEpoch); save_history();
     check_thresholds();
     if (g_net.statusOk) g_status = g_net.status;
@@ -6886,6 +7379,9 @@ static void net_apply() {
       if (moodBefore[i] != model_mood(i)) rebuild = true;   // mascotte cambia umore
   } else {
     g_lastFetchOk = false;
+    g_failN++;
+    strlcpy(g_lastErr, g_net.usage.error, sizeof(g_lastErr));
+    g_lastErrAt = (uint32_t)time(nullptr);
     if (first) g_usage = g_net.usage;  // ST_ERROR mostra g_usage.error
   }
   g_lastPollMs = millis();
@@ -7167,6 +7663,7 @@ void loop() {
     }
     pc_redraw();
     home_redraw();
+    sess_redraw();
   }
   if (g_state == ST_MAIN && g_wifi.isConnected() && g_screenMode < 2 && !g_wxReq && !g_wxDone && g_wxLat != 0) {
     bool due = g_wx.ok ? millis() - g_wxAtMs > 30UL * 60UL * 1000UL : (g_wxTryMs == 0 || millis() - g_wxTryMs > 5UL * 60UL * 1000UL);
@@ -7204,6 +7701,7 @@ void loop() {
       cal_tick();
       tm_restore();
       brk_tick();
+      wk_tick();
       cd_tick();
       if (g_mv.scr) media_view_progress();
       if (g_cdv.scr) cd_view_tick();
@@ -7230,16 +7728,17 @@ void loop() {
       }
       if (v != lv_obj_get_width(g_ui.refBar)) lv_obj_set_width(g_ui.refBar, v);   // solo se cambia
     }
+    if (cur_page() == PG_SESS) sess_blink_tick();
     // cursore ▌ della riga di prompt: lampeggia solo sulla pagina Ora
     static uint32_t lastCur = 0;
-    if (g_ui.agCursor && g_curTile == 1 && now - lastCur > 700 && now - g_lastTouchMs > 400) {
+    if (g_ui.agCursor && cur_page() == PG_ORA && now - lastCur > 700 && now - g_lastTouchMs > 400) {
       lastCur = now;
       if (lv_obj_has_flag(g_ui.agCursor, LV_OBJ_FLAG_HIDDEN)) lv_obj_clear_flag(g_ui.agCursor, LV_OBJ_FLAG_HIDDEN);
       else                                                     lv_obj_add_flag(g_ui.agCursor, LV_OBJ_FLAG_HIDDEN);
     }
     // Le mascotte vivono solo sulla pagina Modelli: animarle altrove (o mentre si
     // scorre) costava ridisegni continui senza che nessuno le vedesse.
-    bool mascLive = (g_curTile == 2) && (now - g_lastTouchMs > 400) && !g_mo.scrim;
+    bool mascLive = (cur_page() == PG_MODELS) && (now - g_lastTouchMs > 400) && !g_mo.scrim;
     if (mascLive && now - lastBob > 80) {           // animazione in base all'umore
       lastBob = now;
       float ph = now / 600.0f;
@@ -7329,7 +7828,7 @@ void loop() {
       int k = g_ntPend;
       g_ntPend = NT_NONE;
       if (!g_ntT0) g_lastTouchMs = millis();
-      if (k == NT_CLAUDE) cc_show(); else if (k == NT_CAL) cal_show(); else if (k == NT_BRK) brk_show(); else if (k == NT_CD) cd_show(); else tm_show();
+      if (k == NT_CLAUDE) cc_show(); else if (k == NT_CAL) cal_show(); else if (k == NT_BRK) brk_show(); else if (k == NT_CD) cd_show(); else if (k == NT_WK) wk_show(); else tm_show();
     }
     if (g_nt.scrim) notice_tick();
   }

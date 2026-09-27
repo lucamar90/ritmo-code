@@ -71,7 +71,7 @@ td.r{text-align:right;white-space:nowrap}td.id{color:var(--fa);word-break:break-
 <section data-t=ora hidden>
  <div class=grid>
   <div class=box><span class=lg>finestra 5h</span><div class=pct id=p5>--</div><div class=blk id=b5></div>
-   <div class=row><span>reset tra</span><span id=a5></span></div><div class=cd id=c5>--</div></div>
+   <div class=row><span>reset tra</span><span id=a5></span></div><div class=cd id=c5>--</div><div class=k id=f5 style="font-size:12px;margin-top:6px"></div></div>
   <div class=box><span class=lg>settimana</span><div class=pct id=p7>--</div><div class=blk id=b7></div>
    <div class=row><span>reset tra</span><span id=a7></span></div><div class=cd id=c7>--</div></div>
  </div>
@@ -91,6 +91,8 @@ td.r{text-align:right;white-space:nowrap}td.id{color:var(--fa);word-break:break-
  <div class=box><span class=lg>ritmo orario</span><div class=seg id=hm></div><div class=bars id=bars></div>
   <div class=hrs><span>0h</span><span>6h</span><span>12h</span><span>18h</span><span>23h</span></div>
   <div class=prompt style="margin-top:10px">quota 5h consumata per ora locale</div></div>
+ <div class=box style="margin-top:22px"><span class=lg id=pjlg>progetti &middot; claude code</span><div class=mini id=pj></div>
+  <div class=f id=pjf style="font-size:12px;margin-top:10px"></div></div>
 </section>
 
 <section data-t=settimane hidden>
@@ -176,7 +178,7 @@ function home(){var d=D,w=d.wx||{};
  else $('wxtoday').textContent='meteo in arrivo...';
  var st={allowed:['ok','var(--ok)'],allowed_warning:['attenzione','var(--wa)'],rejected:['bloccato','var(--bad)']}[d.status]||['--','var(--mu)'];
  var ok=d.models.filter(function(m){return m.mood===1}).length,fc=forecast(week());
- $('hmclaude').innerHTML=[['5h',d.h5,'reset '+hm(d.h5_reset)],['sett.',d.d7,'reset tra '+eta(d.d7_reset)]].map(function(r){
+ $('hmclaude').innerHTML=[['5h',d.h5,(d.fc5&&d.fc5[0]===2)?'<span style="color:'+((d.fc5[1]-nowS())<3600?'var(--bad)':'var(--wa)')+'">finisce '+hm(d.fc5[1])+'</span>':'reset '+hm(d.h5_reset)],['sett.',d.d7,'reset tra '+eta(d.d7_reset)]].map(function(r){
   return '<span class=k>'+r[0]+'</span><span class=blk data-p="'+r[1]+'"></span><span><b style="color:'+lvl(r[1])+';font-weight:500">'+Math.round(r[1])+'%</b> <span class=k>'+r[2]+'</span></span>'}).join('')+
   '<span></span><span class=k>stato <span style="color:'+st[1]+'">'+st[0]+'</span> · modelli '+ok+'/'+d.models.length+' ok'+(d.paused?' · <span style="color:var(--wa)">richieste in pausa</span>':'')+'</span><span>'+(fc?'<span style="color:'+fc[1]+'">'+fc[0]+'</span>':'')+'</span>';
  $('hmclaude').querySelectorAll('.blk').forEach(function(e){blocks(e,+e.getAttribute('data-p'),-1,24)});
@@ -184,6 +186,10 @@ function home(){var d=D,w=d.wx||{};
  $('hmpc').innerHTML=p.ok?'cpu <b class=big style="font-size:15px">'+Math.round(p.cpu)+'%</b>'+(p.cpu_t?' '+Math.round(p.cpu_t)+'°':'')+
   ' &nbsp; ram <b class=big style="font-size:15px">'+Math.round(p.ram)+'%</b> &nbsp; gpu <b class=big style="font-size:15px">'+Math.round(p.gpu)+'%</b>'+(p.gpu_t?' '+Math.round(p.gpu_t)+'°':'')+
   ' &nbsp; disco <b class=big style="font-size:15px">'+Math.round(p.disk)+'%</b>':'<span class=f>pc spento o Ritmo Code PC Monitor non attivo</span>'}
+function fc5(d){var f=d.fc5||[0];
+ if(f[0]===2){var m=(f[1]-nowS())/60;return['a questo ritmo: fine '+hm(f[1]),m<60?'var(--bad)':'var(--wa)']}
+ if(f[0]===3)return['al reset arrivi al ~'+Math.min(100,f[2])+'%','var(--mu)'];
+ if(f[0]===1)return['uso stabile','var(--mu)'];if(f[0]===4)return['finestra esaurita','var(--bad)'];return null}
 function ora(){var d=D;
  [['5',d.h5],['7',d.d7]].forEach(function(x){var p=Math.round(x[1]);$('p'+x[0]).innerHTML=(d.ok?p:'--')+'<small>%</small>';$('p'+x[0]).style.color=lvl(p)});
  var w=week();blocks($('b5'),d.h5,-1);blocks($('b7'),w===-1?d.d7:w.used,w===-1?-1:w.f);
@@ -193,7 +199,8 @@ function ora(){var d=D;
  if(w!==-1){var df=Math.round(w.used-w.f*100),c=df<=0?'var(--ok)':df<=15?'var(--wa)':'var(--bad)';
   ln+=' &nbsp;·&nbsp; ritmo sett. <span style="color:'+c+'">'+(df===0?'in linea':(df>0?'+':'')+df+'%')+'</span>';
   var fc=forecast(w);if(fc)ln+=' &nbsp;·&nbsp; <span style="color:'+fc[1]+'">'+fc[0]+'</span>'}
- $('line').innerHTML=ln;tick()}
+ $('line').innerHTML=ln;
+ var f5=fc5(d);$('f5').innerHTML=f5?'<span style="color:'+f5[1]+'">'+f5[0]+'</span>':'';tick()}
 function modelli(){var MS={0:['--','var(--fa)'],1:['ok','var(--ok)'],2:['429','var(--wa)'],3:['errore','var(--bad)'],4:['id?','var(--wa)']};
  var ok=D.models.filter(function(m){return m.mood===1}).length,lim=D.models.filter(function(m){return m.mood===2}).length;
  $('msum').textContent=ok+' disponibili · '+lim+' limitati';
@@ -215,7 +222,14 @@ function chart(){var all=D.hist,h=all;seg('rg',RG.map(function(r){return r[0]}),
 function ritmo(){var m=HM<0?D.heat_mode:HM;seg('hm',HMN,m,function(i){HM=i;save('hm',i);ritmo()});
  var v=D.heat[m],mx=Math.max.apply(null,v.concat([1])),hr=new Date(nowS()*1000).getHours();
  $('bars').innerHTML=v.map(function(x,i){var r=x/mx;return '<i title="'+i+':00 · '+x.toFixed(1)+'%" style="height:'+(2+r*98).toFixed(1)+'%;'+
-  (i===hr?'background:var(--tx)':'opacity:'+(0.3+r*0.7).toFixed(2))+'"></i>'}).join('')}
+  (i===hr?'background:var(--tx)':'opacity:'+(0.3+r*0.7).toFixed(2))+'"></i>'}).join('');
+ var act=(D.cc_pa||'').split(';').filter(Boolean),raw=(D.cc_pl||[])[m]||'';
+ $('pjlg').textContent='progetti · claude code · '+HMN[m];
+ $('pj').innerHTML=raw?raw.split(';').map(function(it,k){var c=it.lastIndexOf(':'),n=it.slice(0,c),p=+it.slice(c+1),on=act.indexOf(n)>=0;
+  return '<span>'+(on?'<span style="color:var(--ok)">&#9679;</span> ':'')+'<span style="color:var(--'+(k&&!on?'mu':'tx')+')">'+esc(n)+'</span></span>'+
+   '<span class=blk style="height:12px;margin:0"><i style="flex:none;width:'+p+'%;background:var(--ac);opacity:'+(k?.6:1)+'"></i></span>'+
+   '<span style="color:var(--'+(k?'mu':'ac')+')">'+p+'%</span>'}).join(''):'<span class=f>nessun dato: serve Ritmo Code PC Monitor 1.9 collegato</span><span></span><span></span>';
+ $('pjf').innerHTML='stima dai log di claude code, pesata come i prezzi'+(act.length?' &nbsp;·&nbsp; <span style="color:var(--ok)">&#9679;</span> al lavoro adesso':'')}
 function settimane(){var w=(D.weeks||[]).slice(-8),s=0,m=0,h='',dd='';
  w.forEach(function(r,i){var cur=i===w.length-1,t=new Date((r[0]-604800)*1000);
   h+='<i style="height:'+(2+r[1]*0.98)+'%;background:'+lvl(r[1])+';opacity:'+(cur?1:.7)+'"><span style="color:var(--'+(cur?'tx':'mu')+')">'+r[1]+'%</span></i>';

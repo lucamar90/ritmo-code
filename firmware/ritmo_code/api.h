@@ -29,5 +29,6 @@ bool fetchUsage(const char* token, UsageData& out);
 struct ProbeResult {
     int      code;   // codice HTTP (0 = mai sondato, <0 = errore di rete)
     uint16_t ms;     // latenza della richiesta
+    char     msg[64]; // error.message della risposta se non 200 (vuoto altrimenti)
 };
 bool probeModel(const char* token, const char* modelId, ProbeResult& out);
