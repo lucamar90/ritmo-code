@@ -1147,6 +1147,25 @@ def make_handler(sampler, lhm, port):
                     self.send_header("Connection", "close")
                     self.end_headers()
                     self.wfile.write(cover)
+            elif path in ("/app/elena-ritmo.json", "/app/elena-ritmo.apk") and (self._from_device() or self._local()):
+                # aggiornamento senza cavo dell'app Elena Ritmo sull'S8 (la mette qui tools/pubblica.sh del progetto)
+                f = os.path.join(CONFIG_DIR, "app", os.path.basename(path))
+                if not os.path.isfile(f):
+                    self._send(404, "text/plain", "nessuna versione pubblicata")
+                else:
+                    size = os.path.getsize(f)
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json" if f.endswith(".json") else "application/vnd.android.package-archive")
+                    self.send_header("Content-Length", str(size))
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    with open(f, "rb") as fh:
+                        while True:
+                            chunk = fh.read(256 * 1024)
+                            if not chunk:
+                                break
+                            self.wfile.write(chunk)
             elif path == "/limits.json" and (self._from_device() or self._local()):
                 self._send(200, "application/json", json.dumps(LIMITS.history()))
             elif path == "/calendar.json" and (self._from_device() or self._local()):
