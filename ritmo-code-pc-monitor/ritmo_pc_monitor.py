@@ -1111,12 +1111,14 @@ def make_handler(sampler, lhm, port):
             if path == "/data.json":
                 if not self._local():
                     DEVICE_SEEN.update(ip=self.client_address[0], at=time.time())
+                    READERS[self.client_address[0]] = time.time()
                 data = sampler.snapshot()
                 data.update(CLAUDE.fields())
                 data.update(CAL.fields())
                 data.update(MEDIA.fields())
                 data.update(PROJECTS.fields())
                 data.update(SESSIONS.fields())
+                data.update(LIMITS.fields())
                 if data.get("claude_sessions", -1) >= 0:          # mai piu' sessioni al lavoro di quelle aperte
                     data["cc_busy"] = min(data["cc_busy"], data["claude_sessions"])
                 data.update({"app": APP, "version": VERSION})
@@ -1145,6 +1147,8 @@ def make_handler(sampler, lhm, port):
                     self.send_header("Connection", "close")
                     self.end_headers()
                     self.wfile.write(cover)
+            elif path == "/limits.json" and (self._from_device() or self._local()):
+                self._send(200, "application/json", json.dumps(LIMITS.history()))
             elif path == "/calendar.json" and (self._from_device() or self._local()):
                 self._send(200, "application/json", json.dumps(CAL.range_json(), ensure_ascii=False))
             elif path == "/api/calendar" and self._local():
@@ -1171,7 +1175,7 @@ def make_handler(sampler, lhm, port):
 
         def _from_device(self):
             ip = self.client_address[0]
-            return ip in (DEVICE_SEEN["ip"], load_config().get("device"))
+            return ip in (DEVICE_SEEN["ip"], load_config().get("device")) or time.time() - READERS.get(ip, 0) < 600
 
         def do_POST(self):
             path = self.path.split("?")[0]
@@ -1245,6 +1249,13 @@ def make_handler(sampler, lhm, port):
                                                              "Cosi' suonano gli avvisi del dispositivo"), daemon=True).start()
                 self._send(200, "application/json", json.dumps(notify_settings()))
                 return
+            if path == "/statusline" and self._local():   # barra di stato di Claude Code: JSON su stdin -> testo
+                try:
+                    LIMITS.update(self._body())
+                except Exception:
+                    pass
+                self._send(200, "text/plain; charset=utf-8", LIMITS.text())
+                return
             if path.startswith("/claude/"):          # hook di Claude Code: nessuna risposta (finirebbe nel contesto)
                 kind = path[len("/claude/"):]
                 try:
@@ -1303,6 +1314,7 @@ def make_handler(sampler, lhm, port):
 # ---------------------------------------------------------------------------
 
 DEVICE_SEEN = {"ip": None, "at": 0.0}      # ultimo dispositivo che ha letto /data.json
+READERS = {}                               # ip -> ultima lettura di /data.json (scheda e app Android insieme)
 
 LRESULT = ctypes.c_ssize_t
 WNDPROC = ctypes.WINFUNCTYPE(LRESULT, wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM)
@@ -1544,13 +1556,26 @@ class Calendar(threading.Thread):
             self.wake.clear()
 
     def _update(self):
+        # il link si legge dal dispositivo e si ricorda qui: con il dispositivo spento (o con la sola app
+        # Android) gli eventi arrivano lo stesso, anche dopo un riavvio del monitor
         ip = device_ip()
-        if not ip:
-            return self._set(None, "nessun dispositivo collegato")
-        try:
-            url = get_json(f"http://{ip}/api/ical", 3).get("url", "")
-        except Exception:
-            return self._set(self.events, "dispositivo non raggiungibile (eventi precedenti mantenuti)")
+        saved = load_config().get("ical", "")
+        url = ""
+        if ip:
+            try:
+                url = get_json(f"http://{ip}/api/ical", 3).get("url", "")
+                if url != saved:
+                    cfg = load_config()
+                    cfg["ical"] = url
+                    save_config(cfg)
+            except Exception:
+                url = saved
+                if not url:
+                    return self._set(self.events, "dispositivo non raggiungibile (eventi precedenti mantenuti)")
+        else:
+            url = saved
+            if not url:
+                return self._set(None, "nessun dispositivo collegato")
         if not url:
             return self._set(None, "nessun link: impostalo nel pannello del dispositivo, pagina /home")
         try:
@@ -1730,6 +1755,82 @@ class ClaudeProjects(threading.Thread):
 
 
 PROJECTS = ClaudeProjects()
+
+
+class RateLimits:
+    """Limiti 5h e 7 giorni come li passa Claude Code alla sua barra di stato (rate_limits nel JSON su stdin).
+
+    La barra di stato e' il comando curl che manda quel JSON a POST /statusline: niente token, niente chiamate
+    ad Anthropic. Lo storico (un punto ogni 5 minuti, 8 settimane) serve alle pagine 5h, ritmo e settimane.
+    """
+
+    FILE = os.path.join(CONFIG_DIR, "limiti.json")
+    STEP = 300
+    KEEP = 56 * 86400       # 8 settimane per la pagina settimane
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.now = {}
+        self.hist = []          # [t, 5h, 7d]
+        try:
+            saved = json.load(open(self.FILE, encoding="utf-8"))
+            self.now, self.hist = saved.get("now", {}), saved.get("hist", [])
+        except Exception:
+            pass
+
+    def update(self, payload):
+        rl = payload.get("rate_limits") if isinstance(payload, dict) else None
+        if not isinstance(rl, dict):
+            return
+        h5, d7 = rl.get("five_hour") or {}, rl.get("seven_day") or {}
+        t = int(time.time())
+        with self.lock:
+            if "used_percentage" in h5:
+                self.now.update(h5=float(h5["used_percentage"]), h5_r=int(h5.get("resets_at") or 0))
+            if "used_percentage" in d7:
+                self.now.update(d7=float(d7["used_percentage"]), d7_r=int(d7.get("resets_at") or 0))
+            self.now["at"] = t
+            if not self.hist or t - self.hist[-1][0] >= self.STEP:
+                self.hist.append([t, round(self.now.get("h5", 0), 1), round(self.now.get("d7", 0), 1)])
+                self.hist = [x for x in self.hist if t - x[0] <= self.KEEP]
+                try:
+                    os.makedirs(CONFIG_DIR, exist_ok=True)
+                    json.dump({"now": self.now, "hist": self.hist}, open(self.FILE, "w", encoding="utf-8"))
+                except Exception:
+                    pass
+
+    def text(self):
+        with self.lock:
+            n = dict(self.now)
+        parts = []
+        if "h5" in n:
+            parts.append(f"5h {n['h5']:.0f}%")
+        if "d7" in n:
+            parts.append(f"7g {n['d7']:.0f}%")
+        return "  ".join(parts)
+
+    def fields(self):
+        with self.lock:
+            n = dict(self.now)
+        if not n:
+            return {}
+        out = {"rl_at": n.get("at", 0)}
+        t = time.time()
+        if "h5" in n and n.get("h5_r", 0) > t:      # finestra scaduta: Claude Code la toglie, qui pure
+            out.update(rl_5h=n["h5"], rl_5h_r=n["h5_r"])
+        if "d7" in n and n.get("d7_r", 0) > t:
+            out.update(rl_7d=n["d7"], rl_7d_r=n["d7_r"])
+        return out
+
+    def history(self):
+        with self.lock:
+            return {"now": self.fields_unlocked(), "hist": list(self.hist)}
+
+    def fields_unlocked(self):
+        return dict(self.now)
+
+
+LIMITS = RateLimits()
 
 
 # ---------------------------------------------------------------------------
